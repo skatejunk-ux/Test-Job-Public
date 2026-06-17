@@ -2147,7 +2147,7 @@ $clipboardBanner
       <button onclick="toggleLog('events',this)">Vergroot log</button>
     </div>
     <div class="toolbar">
-      <input id="eventsSearch" type="text" value="excpt" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
+      <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
       <button onclick="searchOrNextLog('events','eventsSearch')">Zoeken</button>
       <button onclick="jumpMatch('events',-1)">Vorige</button>
       <button onclick="jumpMatch('events',1)">Volgende</button>
