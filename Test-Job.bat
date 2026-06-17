@@ -231,6 +231,7 @@ function Get-TestJobBatUpdateState {
         UpdateAvailable = ($env:TESTJOB_BAT_UPDATE_AVAILABLE -eq "1")
         SelfBatPath = (Resolve-TestJobLauncherBatPath)
         CacheDir = if ($env:TESTJOB_CACHE_DIR) { $env:TESTJOB_CACHE_DIR } else { (Join-Path ([System.IO.Path]::GetTempPath()) "TestJob") }
+        LegacyBat = $false
     }
     if ($state.UpdateAvailable) {
         $Script:BatUpdateState = $state
@@ -245,11 +246,23 @@ function Get-TestJobBatUpdateState {
         $versionLine = Select-String -LiteralPath $state.SelfBatPath -Pattern 'TESTJOB_BAT_VERSION=' -SimpleMatch -ErrorAction Stop | Select-Object -First 1
         if ($versionLine) {
             $localVersion = (($versionLine.Line -split 'TESTJOB_BAT_VERSION=')[1]).Trim('"')
+        } else {
+            $state.LegacyBat = $true
+            $state.UpdateAvailable = $true
         }
-        $remoteVersion = ((Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatVersionUrl -ErrorAction Stop).Content | Out-String).Trim()
-        if ([string]::IsNullOrWhiteSpace($remoteVersion) -or $remoteVersion -le $localVersion) {
-            $Script:BatUpdateState = $state
-            return $state
+        $remoteVersion = ""
+        try {
+            $remoteVersion = ((Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatVersionUrl -ErrorAction Stop).Content | Out-String).Trim()
+        } catch {
+            if (-not $state.LegacyBat) {
+                throw
+            }
+        }
+        if (-not $state.LegacyBat) {
+            if ([string]::IsNullOrWhiteSpace($remoteVersion) -or $remoteVersion -le $localVersion) {
+                $Script:BatUpdateState = $state
+                return $state
+            }
         }
         if (-not (Test-Path -LiteralPath $state.CacheDir)) {
             [void](New-Item -ItemType Directory -Path $state.CacheDir -Force)
@@ -263,7 +276,7 @@ function Get-TestJobBatUpdateState {
             $Script:BatUpdateState = $state
             return $state
         }
-        if ($batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))) {
+        if (-not [string]::IsNullOrWhiteSpace($remoteVersion) -and $batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))) {
             $Script:BatUpdateState = $state
             return $state
         }
