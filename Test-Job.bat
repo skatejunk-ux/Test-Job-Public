@@ -6,9 +6,7 @@ set "TESTJOB_OUTPUT_DIR=%~dp0"
 set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
 set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
 set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt"
-set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
 set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
-set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
 set "TESTJOB_EMBEDDED_PS1=%TESTJOB_CACHE_DIR%\Test-Job-embedded.ps1"
 
 for /f "tokens=1 delims=:" %%i in ('findstr /n /c:"::PowerShell_Start" "%~f0"') do set "startLine=%%i"
@@ -35,28 +33,21 @@ if exist "%TESTJOB_REMOTE_URL_FILE%" (
 )
 
 if defined TESTJOB_REMOTE_URL (
-    powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
+    powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
      "$ErrorActionPreference='Stop';" ^
      "$dir=$env:TESTJOB_CACHE_DIR;" ^
      "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
-     "$txt=$env:TESTJOB_REMOTE_TXT;" ^
      "$out=$env:TESTJOB_REMOTE_PS1;" ^
-     "$meta=$env:TESTJOB_REMOTE_META;" ^
      "Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue;" ^
      "$response=Invoke-WebRequest -UseBasicParsing -Uri $env:TESTJOB_REMOTE_URL;" ^
      "$content=[string]$response.Content;" ^
-     "Set-Content -LiteralPath $txt -Value $content -Encoding UTF8;" ^
-     "$responseMeta=[ordered]@{ ETag=[string]$response.Headers['ETag']; LastModified=[string]$response.Headers['Last-Modified']; DownloadedAt=(Get-Date).ToString('o') };" ^
-     "($responseMeta | ConvertTo-Json -Compress) | Set-Content -LiteralPath $meta -Encoding UTF8;" ^
-     "$parseErrors=$null;" ^
-     "[System.Management.Automation.Language.Parser]::ParseInput($content,[ref]$null,[ref]$parseErrors) > $null;" ^
-     "if($parseErrors){throw (($parseErrors | ForEach-Object Message) -join [Environment]::NewLine)};" ^
-     "Set-Content -LiteralPath $out -Value $content -Encoding ASCII"
+     "if([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'Start-TestJobProgressWindowV2'){throw 'Ongeldige online payload'};" ^
+     "Set-Content -LiteralPath $out -Value $content -Encoding ASCII;" ^
+     "$env:TESTJOB_RUN_SOURCE='github';" ^
+     "& $out"
 
     if "%ERRORLEVEL%"=="0" (
-        set "TESTJOB_RUN_SOURCE=github"
-        powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%TESTJOB_REMOTE_PS1%"
-        set "PS_EXIT_CODE=%ERRORLEVEL%"
+        set "PS_EXIT_CODE=0"
     ) else (
         if not exist "%TESTJOB_CACHE_DIR%" mkdir "%TESTJOB_CACHE_DIR%"
         more +%startLine% "%~f0" > "%TESTJOB_EMBEDDED_PS1%"
