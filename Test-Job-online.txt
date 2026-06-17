@@ -1,5 +1,12 @@
 $ErrorActionPreference = "Stop"
 
+if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocation.MyCommand.Path) {
+    $env:TESTJOB_HIDDEN = "1"
+    $args = @("-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path)
+    Start-Process -FilePath "powershell.exe" -ArgumentList $args -WindowStyle Hidden | Out-Null
+    return
+}
+
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
@@ -85,7 +92,7 @@ function Start-TestJobProgressWindow {
         $form = [System.Windows.Forms.Form]::new()
         $form.Text = "Test-Job Diagnose - Vertimart"
         $form.StartPosition = "CenterScreen"
-        $form.Size = [System.Drawing.Size]::new(640, 420)
+        $form.Size = [System.Drawing.Size]::new(640, 620)
         $form.FormBorderStyle = "FixedDialog"
         $form.MaximizeBox = $false
         $form.MinimizeBox = $true
@@ -102,7 +109,7 @@ function Start-TestJobProgressWindow {
 
         $accent = [System.Windows.Forms.Panel]::new()
         $accent.BackColor = [System.Drawing.Color]::FromArgb(35, 134, 54)
-        $accent.Size = [System.Drawing.Size]::new(6, 344)
+        $accent.Size = [System.Drawing.Size]::new(6, 544)
         $accent.Location = [System.Drawing.Point]::new(18, 18)
         [void]$form.Controls.Add($accent)
 
@@ -131,11 +138,61 @@ function Start-TestJobProgressWindow {
         $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
         [void]$form.Controls.Add($brand)
 
+        function Add-IntakeField {
+            param(
+                [string]$LabelText,
+                [int]$Left,
+                [int]$Top,
+                [string]$Placeholder,
+                [string]$Marker
+            )
+            $label = [System.Windows.Forms.Label]::new()
+            $label.Text = $LabelText
+            $label.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+            $label.AutoSize = $true
+            $label.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+            $label.Location = [System.Drawing.Point]::new($Left, $Top)
+            [void]$form.Controls.Add($label)
+
+            $box = [System.Windows.Forms.Panel]::new()
+            $box.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+            $box.BorderStyle = "FixedSingle"
+            $box.Size = [System.Drawing.Size]::new(268, 36)
+            $box.Location = [System.Drawing.Point]::new($Left, ($Top + 18))
+            [void]$form.Controls.Add($box)
+
+            $icon = [System.Windows.Forms.Label]::new()
+            $icon.Text = $Marker
+            $icon.Font = [System.Drawing.Font]::new("Segoe UI Symbol", 9)
+            $icon.AutoSize = $false
+            $icon.TextAlign = "MiddleCenter"
+            $icon.Size = [System.Drawing.Size]::new(28, 24)
+            $icon.Location = [System.Drawing.Point]::new(8, 5)
+            $icon.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
+            [void]$box.Controls.Add($icon)
+
+            $textbox = [System.Windows.Forms.TextBox]::new()
+            $textbox.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+            $textbox.Size = [System.Drawing.Size]::new(218, 22)
+            $textbox.Location = [System.Drawing.Point]::new(40, 7)
+            $textbox.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+            $textbox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+            $textbox.BorderStyle = "None"
+            [void]$box.Controls.Add($textbox)
+            Set-TextBoxCueBanner -TextBox $textbox -Text $Placeholder
+            return $textbox
+        }
+
+        $Script:IntakeNaam = Add-IntakeField "Naam" 40 84 "Bijv. Jan Jansen" "o"
+        $Script:IntakePraktijk = Add-IntakeField "Praktijk" 332 84 "Bijv. Praktijk-X" "#"
+        $Script:IntakeTicket = Add-IntakeField "Ticketnummer" 40 142 "Bijv. VM1234-5678" ">"
+        $Script:IntakeLicentie = Add-IntakeField "Licentie" 332 142 "Bijv. LIC-12345" ">"
+
         $stepCard = [System.Windows.Forms.Panel]::new()
         $stepCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
         $stepCard.BorderStyle = "FixedSingle"
         $stepCard.Size = [System.Drawing.Size]::new(430, 54)
-        $stepCard.Location = [System.Drawing.Point]::new(40, 86)
+        $stepCard.Location = [System.Drawing.Point]::new(40, 206)
         [void]$form.Controls.Add($stepCard)
 
         $stepLabel = [System.Windows.Forms.Label]::new()
@@ -160,7 +217,7 @@ function Start-TestJobProgressWindow {
         $percentCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
         $percentCard.BorderStyle = "FixedSingle"
         $percentCard.Size = [System.Drawing.Size]::new(120, 54)
-        $percentCard.Location = [System.Drawing.Point]::new(480, 86)
+        $percentCard.Location = [System.Drawing.Point]::new(480, 206)
         [void]$form.Controls.Add($percentCard)
 
         $percentLabel = [System.Windows.Forms.Label]::new()
@@ -189,7 +246,7 @@ function Start-TestJobProgressWindow {
         $bar.Value = 0
         $bar.Style = "Continuous"
         $bar.Size = [System.Drawing.Size]::new(560, 18)
-        $bar.Location = [System.Drawing.Point]::new(40, 154)
+        $bar.Location = [System.Drawing.Point]::new(40, 274)
         [void]$form.Controls.Add($bar)
 
         $phaseNames = @("Start", "Software", "Firewall", "Netwerk", "Logs", "Rapport")
@@ -201,7 +258,7 @@ function Start-TestJobProgressWindow {
             $phase.AutoSize = $false
             $phase.TextAlign = "MiddleCenter"
             $phase.Size = [System.Drawing.Size]::new(88, 18)
-            $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 180)
+            $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 300)
             $phase.ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
             [void]$form.Controls.Add($phase)
             $phaseLabels += $phase
@@ -213,7 +270,7 @@ function Start-TestJobProgressWindow {
         $log.ScrollBars = "Vertical"
         $log.Font = [System.Drawing.Font]::new("Consolas", 9)
         $log.Size = [System.Drawing.Size]::new(560, 138)
-        $log.Location = [System.Drawing.Point]::new(40, 220)
+        $log.Location = [System.Drawing.Point]::new(40, 340)
         $log.BackColor = [System.Drawing.Color]::FromArgb(11, 17, 23)
         $log.ForeColor = [System.Drawing.Color]::FromArgb(215, 221, 229)
         $log.BorderStyle = "FixedSingle"
@@ -225,7 +282,7 @@ function Start-TestJobProgressWindow {
         $footer.AutoSize = $false
         $footer.TextAlign = "MiddleRight"
         $footer.Size = [System.Drawing.Size]::new(560, 22)
-        $footer.Location = [System.Drawing.Point]::new(40, 362)
+        $footer.Location = [System.Drawing.Point]::new(40, 522)
         $footer.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
         [void]$form.Controls.Add($footer)
 
@@ -288,6 +345,20 @@ function Close-TestJobProgressWindow {
         $Script:ProgressForm.Close()
         $Script:ProgressForm.Dispose()
     } catch {}
+}
+
+function Get-TestJobIntakeData {
+    $read = {
+        param($Control)
+        if ($Control) { return $Control.Text.Trim() }
+        return ""
+    }
+    return [pscustomobject]@{
+        Naam = & $read $Script:IntakeNaam
+        Praktijk = & $read $Script:IntakePraktijk
+        Ticketnummer = & $read $Script:IntakeTicket
+        Licentie = & $read $Script:IntakeLicentie
+    }
 }
 
 function HtmlEncode {
@@ -1779,7 +1850,7 @@ function Write-TestJobHtmlReport {
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($Data.Licentie) { $metaParts += "<span><strong>Licentie</strong> $(HtmlEncode $Data.Licentie)</span>" }
-    $metaHtml = if ($metaParts.Count) { $metaParts -join "<span class='meta-sep'>??</span>" } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
+    $metaHtml = if ($metaParts.Count) { $metaParts -join "<span class='meta-sep'> | </span>" } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
     $domainTotal = $domainItems.Count
@@ -1880,7 +1951,7 @@ $clipboardBanner
       <h1>Test-Job Rapport</h1>
       <a class="action-link" href="https://www.speedtest.net/" target="_blank" rel="noopener noreferrer">Open Speedtest.net</a>
     </div>
-    <div class="subtitle">$generated ?? Rapport staat op het klembord voor plakken in TOPdesk</div>
+    <div class="subtitle">$generated - Rapport staat op het klembord voor plakken in TOPdesk</div>
     <div class="report-meta">$metaHtml</div>
     <div class="filename-line"><strong>Bestandsnaam</strong> $(HtmlEncode $reportFileName)</div>
   </div>
@@ -2048,13 +2119,6 @@ document.querySelectorAll('pre[id^="exqlogs"]').forEach(function(pre){
     Set-Content -Path $Path -Value $html -Encoding UTF8
 }
 
-Write-Host "Test-Job v3.2 - Directe PowerShell rapport-run" -ForegroundColor Cyan
-$formData = Show-TestJobStartForm
-if (-not $formData) {
-    Write-Host "Diagnose geannuleerd." -ForegroundColor Yellow
-    return
-}
-
 Start-TestJobProgressWindow
 if ($Script:LaunchSource -eq "github") {
     Set-TestJobProgress 2 "Online versie geladen van publieke bron"
@@ -2062,8 +2126,6 @@ if ($Script:LaunchSource -eq "github") {
     Set-TestJobProgress 2 "Lokale fallbackversie gestart"
 }
 Set-TestJobProgress 5 "Test-Job diagnose starten"
-
-Write-Host "Diagnosegegevens verzamelen..." -ForegroundColor Yellow
 
 Set-TestJobProgress 12 "Basisgegevens parallel verzamelen"
 $parallelResults = Invoke-ParallelTaskScripts -MaxWorkers 7 -Tasks @(
@@ -2125,10 +2187,12 @@ Set-TestJobProgress 58 "LAN apparaten scannen"
 $lanInfo = Invoke-SafeCheck "lan_scan" { Get-LanScan } ([pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() })
 
 Set-TestJobProgress 70 "Systeem, beveiliging en netwerkdetails verzamelen"
+$formData = Get-TestJobIntakeData
 $data = [pscustomobject]@{
     Timestamp = Get-Date
     Naam = $formData.Naam
     Praktijk = $formData.Praktijk
+    Ticketnummer = $formData.Ticketnummer
     Licentie = $formData.Licentie
     ComputerName = Invoke-SafeCheck "computer_name" { $env:COMPUTERNAME } ""
     LoggedUser = Invoke-SafeCheck "logged_user" { "$env:USERDOMAIN\$env:USERNAME" } ""
