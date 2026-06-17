@@ -7,6 +7,7 @@ if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocatio
     return
 }
 
+$Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
@@ -304,35 +305,53 @@ function Set-TestJobProgress {
         [int]$Percent,
         [string]$Text
     )
-    if (-not $Script:ProgressForm) { return }
-    try {
-        $value = [math]::Max(0, [math]::Min(100, $Percent))
-        $Script:ProgressBar.Value = $value
-        $Script:ProgressStatus.Text = $Text
-        if ($Script:ProgressPercent) {
-            $Script:ProgressPercent.Text = "$value%"
-        }
-        if ($Script:ProgressPhases) {
-            for ($i = 0; $i -lt $Script:ProgressPhases.Count; $i++) {
-                $phaseBoundary = @(0, 12, 30, 58, 70, 86)[$i]
-                if ($value -ge $phaseBoundary) {
-                    $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
-                } else {
-                    $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
-                }
+    if ($env:TESTJOB_WORKER -eq "1" -and $env:TESTJOB_PROGRESS_PATH) {
+        try {
+            $entry = [pscustomobject]@{
+                Time = (Get-Date).ToString("HH:mm:ss")
+                Percent = [Math]::Max(0, [Math]::Min(100, $Percent))
+                Text = $Text
             }
-            if ($value -ge 42 -and $value -lt 58) { $Script:ProgressPhases[2].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
-            elseif ($value -ge 58 -and $value -lt 70) { $Script:ProgressPhases[3].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
-            elseif ($value -ge 70 -and $value -lt 86) { $Script:ProgressPhases[4].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
-            elseif ($value -ge 86 -and $value -lt 100) { $Script:ProgressPhases[5].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+            Add-Content -LiteralPath $env:TESTJOB_PROGRESS_PATH -Value ($entry | ConvertTo-Json -Compress) -Encoding UTF8
+        } catch {}
+        return
+    }
+    if (-not $Script:ProgressForm) { return }
+    $update = {
+        param([int]$p, [string]$t)
+        try {
+            $value = [math]::Max(0, [math]::Min(100, $p))
+            $Script:ProgressBar.Value = $value
+            $Script:ProgressStatus.Text = $t
+            if ($Script:ProgressPercent) { $Script:ProgressPercent.Text = "$value%" }
+            if ($Script:ProgressPhases) {
+                for ($i = 0; $i -lt $Script:ProgressPhases.Count; $i++) {
+                    $phaseBoundary = @(0, 20, 38, 55, 72, 86)[$i]
+                    if ($value -ge $phaseBoundary) {
+                        $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
+                    } else {
+                        $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
+                    }
+                }
+                if ($value -ge 42 -and $value -lt 58) { $Script:ProgressPhases[2].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 58 -and $value -lt 70) { $Script:ProgressPhases[3].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 70 -and $value -lt 86) { $Script:ProgressPhases[4].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 86 -and $value -lt 100) { $Script:ProgressPhases[5].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+            }
+            if ($Script:ProgressLog) {
+                $line = "{0:HH:mm:ss}  {1}" -f (Get-Date), $t
+                $Script:ProgressLog.AppendText($line + [Environment]::NewLine)
+                $Script:ProgressLog.SelectionStart = $Script:ProgressLog.TextLength
+                $Script:ProgressLog.ScrollToCaret()
+            }
+        } catch {}
+    }
+    try {
+        if ($Script:ProgressForm.InvokeRequired) {
+            [void]$Script:ProgressForm.BeginInvoke($update, @($Percent, $Text))
+        } else {
+            & $update $Percent $Text
         }
-        if ($Script:ProgressLog) {
-            $line = "{0:HH:mm:ss}  {1}" -f (Get-Date), $Text
-            $Script:ProgressLog.AppendText($line + [Environment]::NewLine)
-            $Script:ProgressLog.SelectionStart = $Script:ProgressLog.TextLength
-            $Script:ProgressLog.ScrollToCaret()
-        }
-        [System.Windows.Forms.Application]::DoEvents()
     } catch {}
 }
 
@@ -2119,133 +2138,514 @@ document.querySelectorAll('pre[id^="exqlogs"]').forEach(function(pre){
     Set-Content -Path $Path -Value $html -Encoding UTF8
 }
 
-Start-TestJobProgressWindow
-if ($Script:LaunchSource -eq "github") {
-    Set-TestJobProgress 2 "Online versie geladen van publieke bron"
-} else {
-    Set-TestJobProgress 2 "Lokale fallbackversie gestart"
-}
-Set-TestJobProgress 5 "Test-Job diagnose starten"
 
-Set-TestJobProgress 12 "Basisgegevens parallel verzamelen"
-$parallelResults = Invoke-ParallelTaskScripts -MaxWorkers 7 -Tasks @(
-    [pscustomobject]@{
-        Name = "installed_apps"
-        ScriptText = @"
+function Invoke-TestJobDiagnosis {
+    $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+    if ($Script:LaunchSource -eq "github") {
+        Set-TestJobProgress 2 "Online versie geladen van publieke bron"
+    } else {
+        Set-TestJobProgress 2 "Lokale fallbackversie gestart"
+    }
+    Set-TestJobProgress 5 "Test-Job diagnose starten"
+
+    Set-TestJobProgress 12 "Basisgegevens parallel verzamelen"
+    $parallelResults = Invoke-ParallelTaskScripts -MaxWorkers 7 -Tasks @(
+        [pscustomobject]@{
+            Name = "installed_apps"
+            ScriptText = @"
 $(Get-FunctionSource 'Get-InstalledApps')
 Get-InstalledApps
 "@
-        Arguments = @()
-        Default = @()
-    },
-    [pscustomobject]@{
-        Name = "windows_kb_updates"
-        ScriptText = @"
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "windows_kb_updates"
+            ScriptText = @"
 $(Get-FunctionSource 'Get-WindowsKbUpdates')
 Get-WindowsKbUpdates
 "@
-        Arguments = @()
-        Default = @()
-    },
-    [pscustomobject]@{
-        Name = "event_logs"
-        ScriptText = @"
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "event_logs"
+            ScriptText = @"
 $(Get-FunctionSource 'Get-EventLogRows')
 Get-EventLogRows
 "@
-        Arguments = @()
-        Default = @()
-    },
-    [pscustomobject]@{
-        Name = "exquise_logs"
-        ScriptText = @"
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "exquise_logs"
+            ScriptText = @"
 $(Get-FunctionSource 'Get-ExquiseLogs')
 Get-ExquiseLogs
 "@
-        Arguments = @()
-        Default = @()
-    },
-    [pscustomobject]@{
-        Name = "wan"
-        ScriptText = @"
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "wan"
+            ScriptText = @"
 $(Get-FunctionSource 'Get-WanInfo')
 Get-WanInfo
 "@
-        Arguments = @()
-        Default = @([pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" })
+            Arguments = @()
+            Default = @([pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" })
+        }
+    )
+
+    Set-TestJobProgress 30 "Geinstalleerde software indelen"
+    $apps = @($parallelResults["installed_apps"])
+    $splitApps = Invoke-SafeCheck "split_apps" { Split-InstalledApps $apps } ([pscustomobject]@{ Software = @(); Updates = @() })
+
+    Set-TestJobProgress 42 "Firewall endpoints testen"
+    $domainTests = Invoke-SafeCheck "domain_tests" { Test-DomainSet } ([pscustomobject]@{ Extensive = @(); Basic = @(); Failures = @() })
+
+    Set-TestJobProgress 58 "LAN apparaten scannen"
+    $lanInfo = Invoke-SafeCheck "lan_scan" { Get-LanScan } ([pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() })
+
+    Set-TestJobProgress 70 "Systeem, beveiliging en netwerkdetails verzamelen"
+    $data = [pscustomobject]@{
+        Timestamp = Get-Date
+        Naam = ""
+        Praktijk = ""
+        Ticketnummer = ""
+        Licentie = ""
+        ComputerName = Invoke-SafeCheck "computer_name" { $env:COMPUTERNAME } ""
+        LoggedUser = Invoke-SafeCheck "logged_user" { "$env:USERDOMAIN\$env:USERNAME" } ""
+        Os = Invoke-SafeCheck "os_info" { Get-OsInfo } ([pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" })
+        SystemModel = Invoke-SafeCheck "system_model" { Get-SystemModel } ""
+        Cpu = Invoke-SafeCheck "cpu_info" { Get-CpuInfo } ([pscustomobject]@{ Name = "Niet beschikbaar"; Cores = 0; Logical = 0; LaunchYear = $null })
+        Memory = Invoke-SafeCheck "memory_info" { Get-MemoryInfo } ([pscustomobject]@{ TotalGb = "?"; AvailableGb = "?"; Percent = "?" })
+        Disks = @(Invoke-SafeCheck "disks" { Get-DiskInfo } @())
+        Uptime = Invoke-SafeCheck "uptime" { Get-UptimeInfo } ([pscustomobject]@{ Text = "-" })
+        FastBoot = Invoke-SafeCheck "fastboot" { Get-FastBoot } $null
+        RebootPending = Invoke-SafeCheck "reboot_pending" { Get-RebootPending } $null
+        ProxyEnabled = Invoke-SafeCheck "proxy" { Get-ProxyEnabled } $null
+        WebView2 = Invoke-SafeCheck "webview2" { Get-WebView2Info } ([pscustomobject]@{ Installed = $false; Version = "" })
+        DotNet = Invoke-SafeCheck "dotnet" { Get-DotNetVersion } ""
+        LastWindowsUpdate = Invoke-SafeCheck "last_windows_update" { Get-LastWindowsUpdate } ""
+        WindowsInstall = Invoke-SafeCheck "windows_install_date" { Get-WindowsInstallDate $apps } ([pscustomobject]@{ Date = ""; Source = "onbekend" })
+        KbUpdates = @($parallelResults["windows_kb_updates"])
+        Antivirus = @(Invoke-SafeCheck "antivirus" { Get-AntivirusProducts } @())
+        SmartAppControl = Invoke-SafeCheck "smart_app_control" { Get-SmartAppControl } ([pscustomobject]@{ State = "Niet beschikbaar" })
+        ExquiseProcesses = @(Invoke-SafeCheck "exquise_processes" { Get-ProcessInfo "exquise" } @())
+        IasProcesses = @(Invoke-SafeCheck "ias_processes" { Get-ProcessInfo "imageacquisition" } @())
+        Adapters = @(Invoke-SafeCheck "network_adapters" { Get-NetworkAdapters } @())
+        Gateway = Invoke-SafeCheck "gateway" { Get-GatewayIp } ""
+        DnsServers = Invoke-SafeCheck "dns_servers" { Get-DnsServers } ""
+        Wan = if ($parallelResults["wan"] -and $parallelResults["wan"].Count -gt 0) { $parallelResults["wan"][0] } else { [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" } }
+        Network = $domainTests
+        Lan = $lanInfo
+        EventLogs = @($parallelResults["event_logs"])
+        ExquiseLogs = @($parallelResults["exquise_logs"])
+        AppChecks = @(Invoke-SafeCheck "app_checks" { Get-AppChecks $splitApps.Software } @())
+        Software = @($splitApps.Software)
+        Updates = @($splitApps.Updates)
+        CollectionErrors = $Script:CollectionErrors
+        ClipboardOk = $false
+        ReportFileName = ""
     }
-)
-
-Set-TestJobProgress 30 "Geinstalleerde software indelen"
-$apps = @($parallelResults["installed_apps"])
-$splitApps = Invoke-SafeCheck "split_apps" { Split-InstalledApps $apps } ([pscustomobject]@{ Software = @(); Updates = @() })
-
-Set-TestJobProgress 42 "Firewall endpoints testen"
-$domainTests = Invoke-SafeCheck "domain_tests" { Test-DomainSet } ([pscustomobject]@{ Extensive = @(); Basic = @(); Failures = @() })
-
-Set-TestJobProgress 58 "LAN apparaten scannen"
-$lanInfo = Invoke-SafeCheck "lan_scan" { Get-LanScan } ([pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() })
-
-Set-TestJobProgress 70 "Systeem, beveiliging en netwerkdetails verzamelen"
-$formData = Get-TestJobIntakeData
-$data = [pscustomobject]@{
-    Timestamp = Get-Date
-    Naam = $formData.Naam
-    Praktijk = $formData.Praktijk
-    Ticketnummer = $formData.Ticketnummer
-    Licentie = $formData.Licentie
-    ComputerName = Invoke-SafeCheck "computer_name" { $env:COMPUTERNAME } ""
-    LoggedUser = Invoke-SafeCheck "logged_user" { "$env:USERDOMAIN\$env:USERNAME" } ""
-    Os = Invoke-SafeCheck "os_info" { Get-OsInfo } ([pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" })
-    SystemModel = Invoke-SafeCheck "system_model" { Get-SystemModel } ""
-    Cpu = Invoke-SafeCheck "cpu_info" { Get-CpuInfo } ([pscustomobject]@{ Name = "Niet beschikbaar"; Cores = 0; Logical = 0; LaunchYear = $null })
-    Memory = Invoke-SafeCheck "memory_info" { Get-MemoryInfo } ([pscustomobject]@{ TotalGb = "?"; AvailableGb = "?"; Percent = "?" })
-    Disks = @(Invoke-SafeCheck "disks" { Get-DiskInfo } @())
-    Uptime = Invoke-SafeCheck "uptime" { Get-UptimeInfo } ([pscustomobject]@{ Text = "-" })
-    FastBoot = Invoke-SafeCheck "fastboot" { Get-FastBoot } $null
-    RebootPending = Invoke-SafeCheck "reboot_pending" { Get-RebootPending } $null
-    ProxyEnabled = Invoke-SafeCheck "proxy" { Get-ProxyEnabled } $null
-    WebView2 = Invoke-SafeCheck "webview2" { Get-WebView2Info } ([pscustomobject]@{ Installed = $false; Version = "" })
-    DotNet = Invoke-SafeCheck "dotnet" { Get-DotNetVersion } ""
-    LastWindowsUpdate = Invoke-SafeCheck "last_windows_update" { Get-LastWindowsUpdate } ""
-    WindowsInstall = Invoke-SafeCheck "windows_install_date" { Get-WindowsInstallDate $apps } ([pscustomobject]@{ Date = ""; Source = "onbekend" })
-    KbUpdates = @($parallelResults["windows_kb_updates"])
-    Antivirus = @(Invoke-SafeCheck "antivirus" { Get-AntivirusProducts } @())
-    SmartAppControl = Invoke-SafeCheck "smart_app_control" { Get-SmartAppControl } ([pscustomobject]@{ State = "Niet beschikbaar" })
-    ExquiseProcesses = @(Invoke-SafeCheck "exquise_processes" { Get-ProcessInfo "exquise" } @())
-    IasProcesses = @(Invoke-SafeCheck "ias_processes" { Get-ProcessInfo "imageacquisition" } @())
-    Adapters = @(Invoke-SafeCheck "network_adapters" { Get-NetworkAdapters } @())
-    Gateway = Invoke-SafeCheck "gateway" { Get-GatewayIp } ""
-    DnsServers = Invoke-SafeCheck "dns_servers" { Get-DnsServers } ""
-    Wan = if ($parallelResults["wan"] -and $parallelResults["wan"].Count -gt 0) { $parallelResults["wan"][0] } else { [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" } }
-    Network = $domainTests
-    Lan = $lanInfo
-    EventLogs = @($parallelResults["event_logs"])
-    ExquiseLogs = @($parallelResults["exquise_logs"])
-    AppChecks = @(Invoke-SafeCheck "app_checks" { Get-AppChecks $splitApps.Software } @())
-    Software = @($splitApps.Software)
-    Updates = @($splitApps.Updates)
-    CollectionErrors = $Script:CollectionErrors
-    ClipboardOk = $false
+    Set-TestJobProgress 82 "Diagnosegegevens verzameld"
+    return $data
 }
 
-$data | Add-Member -NotePropertyName ReportFileName -NotePropertyValue (Get-ReportFileName $data)
-$reportPath = Join-Path $Script:OutputDir $data.ReportFileName
-Set-TestJobProgress 86 "HTML rapport schrijven"
-Write-Host "HTML-rapport schrijven..." -ForegroundColor Yellow
-Write-TestJobHtmlReport -Data $data -Path $reportPath
+function Start-TestJobProgressWindowV2 {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
 
-Set-TestJobProgress 93 "Rapport op klembord zetten"
-$data.ClipboardOk = Copy-FileToClipboard $reportPath
-Write-TestJobHtmlReport -Data $data -Path $reportPath
+    $form = [System.Windows.Forms.Form]::new()
+    $form.Text = "Test-Job Diagnose - Vertimart"
+    $form.StartPosition = "CenterScreen"
+    $form.Size = [System.Drawing.Size]::new(660, 720)
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $true
+    $form.TopMost = $true
+    $form.BackColor = [System.Drawing.Color]::FromArgb(18, 24, 32)
+    $form.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
 
-Write-Host "[OK] Rapport aangemaakt: $reportPath" -ForegroundColor Green
-try {
-    Set-TestJobProgress 98 "Rapport openen"
-    Start-Process -FilePath $reportPath
-} catch {
-    Write-Host "[LET OP] Rapport kon niet automatisch worden geopend: $($_.Exception.Message)" -ForegroundColor Yellow
+    $accent = [System.Windows.Forms.Panel]::new()
+    $accent.BackColor = [System.Drawing.Color]::FromArgb(35, 134, 54)
+    $accent.Size = [System.Drawing.Size]::new(6, 642)
+    $accent.Location = [System.Drawing.Point]::new(18, 18)
+    [void]$form.Controls.Add($accent)
+
+    $headerLogo = [System.Windows.Forms.PictureBox]::new()
+    $headerLogo.Image = Get-TestJobLogoImage
+    $headerLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $headerLogo.Size = [System.Drawing.Size]::new(54, 54)
+    $headerLogo.Location = [System.Drawing.Point]::new(38, 20)
+    [void]$form.Controls.Add($headerLogo)
+
+    $title = [System.Windows.Forms.Label]::new()
+    $title.Text = "Test-Job Diagnose"
+    $title.Font = [System.Drawing.Font]::new("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
+    $title.AutoSize = $true
+    $title.ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255)
+    $title.Location = [System.Drawing.Point]::new(104, 24)
+    [void]$form.Controls.Add($title)
+
+    $subtitle = [System.Windows.Forms.Label]::new()
+    $subtitle.Text = "Diagnose start direct. Vul de gegevens rustig in; het rapport opent pas via de knop."
+    $subtitle.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+    $subtitle.AutoSize = $false
+    $subtitle.Size = [System.Drawing.Size]::new(430, 36)
+    $subtitle.Location = [System.Drawing.Point]::new(106, 53)
+    $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
+    [void]$form.Controls.Add($subtitle)
+
+    $brand = [System.Windows.Forms.Label]::new()
+    $brand.Text = "VERTIMART"
+    $brand.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 9, [System.Drawing.FontStyle]::Bold)
+    $brand.AutoSize = $true
+    $brand.Location = [System.Drawing.Point]::new(544, 26)
+    $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
+    [void]$form.Controls.Add($brand)
+
+    $intakePanel = [System.Windows.Forms.Panel]::new()
+    $intakePanel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
+    $intakePanel.BorderStyle = "FixedSingle"
+    $intakePanel.Size = [System.Drawing.Size]::new(560, 168)
+    $intakePanel.Location = [System.Drawing.Point]::new(40, 96)
+    [void]$form.Controls.Add($intakePanel)
+
+    function Add-IntakeFieldV2 {
+        param([string]$LabelText, [int]$Left, [int]$Top, [string]$Placeholder, [string]$Marker)
+        $label = [System.Windows.Forms.Label]::new()
+        $label.Text = $LabelText
+        $label.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
+        $label.AutoSize = $true
+        $label.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        $label.Location = [System.Drawing.Point]::new($Left, $Top)
+        [void]$intakePanel.Controls.Add($label)
+
+        $box = [System.Windows.Forms.Panel]::new()
+        $box.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+        $box.BorderStyle = "FixedSingle"
+        $box.Size = [System.Drawing.Size]::new(245, 38)
+        $box.Location = [System.Drawing.Point]::new($Left, ($Top + 20))
+        [void]$intakePanel.Controls.Add($box)
+
+        $icon = [System.Windows.Forms.Label]::new()
+        $icon.Text = $Marker
+        $icon.Font = [System.Drawing.Font]::new("Segoe UI Symbol", 9)
+        $icon.AutoSize = $false
+        $icon.TextAlign = "MiddleCenter"
+        $icon.Size = [System.Drawing.Size]::new(28, 24)
+        $icon.Location = [System.Drawing.Point]::new(8, 6)
+        $icon.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
+        [void]$box.Controls.Add($icon)
+
+        $textbox = [System.Windows.Forms.TextBox]::new()
+        $textbox.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+        $textbox.Size = [System.Drawing.Size]::new(200, 22)
+        $textbox.Location = [System.Drawing.Point]::new(38, 8)
+        $textbox.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+        $textbox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        $textbox.BorderStyle = "None"
+        [void]$box.Controls.Add($textbox)
+        Set-TextBoxCueBanner -TextBox $textbox -Text $Placeholder
+        return $textbox
+    }
+
+    $Script:IntakeNaam = Add-IntakeFieldV2 "Naam" 20 18 "Bijv. Jan Jansen" "o"
+    $Script:IntakePraktijk = Add-IntakeFieldV2 "Praktijk" 292 18 "Bijv. Praktijk-X" "#"
+    $Script:IntakeTicket = Add-IntakeFieldV2 "Ticketnummer" 20 92 "Bijv. VM1234-5678" ">"
+    $Script:IntakeLicentie = Add-IntakeFieldV2 "Licentie" 292 92 "Bijv. LIC-12345" ">"
+
+    $stepCard = [System.Windows.Forms.Panel]::new()
+    $stepCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+    $stepCard.BorderStyle = "FixedSingle"
+    $stepCard.Size = [System.Drawing.Size]::new(430, 54)
+    $stepCard.Location = [System.Drawing.Point]::new(40, 282)
+    [void]$form.Controls.Add($stepCard)
+
+    $stepLabel = [System.Windows.Forms.Label]::new()
+    $stepLabel.Text = "HUIDIGE STAP"
+    $stepLabel.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+    $stepLabel.AutoSize = $false
+    $stepLabel.Size = [System.Drawing.Size]::new(390, 15)
+    $stepLabel.Location = [System.Drawing.Point]::new(10, 7)
+    $stepLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$stepCard.Controls.Add($stepLabel)
+
+    $status = [System.Windows.Forms.Label]::new()
+    $status.Text = "Starten..."
+    $status.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+    $status.AutoSize = $false
+    $status.Size = [System.Drawing.Size]::new(390, 24)
+    $status.Location = [System.Drawing.Point]::new(10, 24)
+    $status.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+    [void]$stepCard.Controls.Add($status)
+
+    $percentCard = [System.Windows.Forms.Panel]::new()
+    $percentCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+    $percentCard.BorderStyle = "FixedSingle"
+    $percentCard.Size = [System.Drawing.Size]::new(120, 54)
+    $percentCard.Location = [System.Drawing.Point]::new(480, 282)
+    [void]$form.Controls.Add($percentCard)
+
+    $percentLabel = [System.Windows.Forms.Label]::new()
+    $percentLabel.Text = "VOORTGANG"
+    $percentLabel.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+    $percentLabel.AutoSize = $false
+    $percentLabel.TextAlign = "MiddleRight"
+    $percentLabel.Size = [System.Drawing.Size]::new(96, 15)
+    $percentLabel.Location = [System.Drawing.Point]::new(10, 7)
+    $percentLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$percentCard.Controls.Add($percentLabel)
+
+    $percent = [System.Windows.Forms.Label]::new()
+    $percent.Text = "0%"
+    $percent.Font = [System.Drawing.Font]::new("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+    $percent.AutoSize = $false
+    $percent.TextAlign = "MiddleRight"
+    $percent.Size = [System.Drawing.Size]::new(96, 26)
+    $percent.Location = [System.Drawing.Point]::new(10, 23)
+    $percent.ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255)
+    [void]$percentCard.Controls.Add($percent)
+
+    $bar = [System.Windows.Forms.ProgressBar]::new()
+    $bar.Minimum = 0
+    $bar.Maximum = 100
+    $bar.Value = 0
+    $bar.Style = "Continuous"
+    $bar.Size = [System.Drawing.Size]::new(560, 18)
+    $bar.Location = [System.Drawing.Point]::new(40, 350)
+    [void]$form.Controls.Add($bar)
+
+    $phaseNames = @("Start", "Software", "Firewall", "Netwerk", "Logs", "Rapport")
+    $phaseLabels = @()
+    for ($i = 0; $i -lt $phaseNames.Count; $i++) {
+        $phase = [System.Windows.Forms.Label]::new()
+        $phase.Text = $phaseNames[$i]
+        $phase.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+        $phase.AutoSize = $false
+        $phase.TextAlign = "MiddleCenter"
+        $phase.Size = [System.Drawing.Size]::new(88, 18)
+        $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 376)
+        $phase.ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
+        [void]$form.Controls.Add($phase)
+        $phaseLabels += $phase
+    }
+
+    $log = [System.Windows.Forms.TextBox]::new()
+    $log.Multiline = $true
+    $log.ReadOnly = $true
+    $log.ScrollBars = "Vertical"
+    $log.Font = [System.Drawing.Font]::new("Consolas", 9)
+    $log.Size = [System.Drawing.Size]::new(560, 138)
+    $log.Location = [System.Drawing.Point]::new(40, 416)
+    $log.BackColor = [System.Drawing.Color]::FromArgb(11, 17, 23)
+    $log.ForeColor = [System.Drawing.Color]::FromArgb(215, 221, 229)
+    $log.BorderStyle = "FixedSingle"
+    [void]$form.Controls.Add($log)
+
+    $hint = [System.Windows.Forms.Label]::new()
+    $hint.Text = "Het rapport wordt pas geschreven, gekopieerd en geopend wanneer u op Open rapport klikt."
+    $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8)
+    $hint.AutoSize = $false
+    $hint.Size = [System.Drawing.Size]::new(360, 38)
+    $hint.Location = [System.Drawing.Point]::new(40, 568)
+    $hint.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
+    [void]$form.Controls.Add($hint)
+
+    $openButton = [System.Windows.Forms.Button]::new()
+    $openButton.Text = "Diagnose loopt..."
+    $openButton.Enabled = $false
+    $openButton.FlatStyle = "Flat"
+    $openButton.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+    $openButton.Size = [System.Drawing.Size]::new(180, 38)
+    $openButton.Location = [System.Drawing.Point]::new(420, 568)
+    $openButton.BackColor = [System.Drawing.Color]::FromArgb(32, 44, 58)
+    $openButton.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
+    $openButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(48, 58, 72)
+    [void]$form.Controls.Add($openButton)
+
+    $footer = [System.Windows.Forms.Label]::new()
+    $footer.Text = "(C) Vertimart - Test-Job standalone diagnose"
+    $footer.Font = [System.Drawing.Font]::new("Segoe UI", 8)
+    $footer.AutoSize = $false
+    $footer.TextAlign = "MiddleRight"
+    $footer.Size = [System.Drawing.Size]::new(560, 22)
+    $footer.Location = [System.Drawing.Point]::new(40, 626)
+    $footer.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
+    [void]$form.Controls.Add($footer)
+
+    $Script:ProgressForm = $form
+    $Script:ProgressBar = $bar
+    $Script:ProgressStatus = $status
+    $Script:ProgressPercent = $percent
+    $Script:ProgressPhases = $phaseLabels
+    $Script:ProgressLog = $log
+    $Script:OpenReportButton = $openButton
+    $Script:DiagnosisResult = $null
+    $Script:WorkerProcess = $null
+    $Script:WorkerProgressLine = 0
+    $Script:WorkerResultPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_result_{0}.xml" -f ([guid]::NewGuid().ToString("N")))
+    $Script:WorkerProgressPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_progress_{0}.jsonl" -f ([guid]::NewGuid().ToString("N")))
+    Remove-Item -LiteralPath $Script:WorkerResultPath,$Script:WorkerProgressPath -Force -ErrorAction SilentlyContinue
+
+    $openButton.Add_Click({
+        if (-not $Script:DiagnosisResult) { return }
+        try {
+            $Script:OpenReportButton.Enabled = $false
+            $Script:OpenReportButton.Text = "Rapport openen..."
+            $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(32, 44, 58)
+            $formData = Get-TestJobIntakeData
+            $Script:DiagnosisResult.Naam = $formData.Naam
+            $Script:DiagnosisResult.Praktijk = $formData.Praktijk
+            $Script:DiagnosisResult.Ticketnummer = $formData.Ticketnummer
+            $Script:DiagnosisResult.Licentie = $formData.Licentie
+            $fileName = Get-ReportFileName $Script:DiagnosisResult
+            $Script:DiagnosisResult.ReportFileName = $fileName
+            $reportPath = Join-Path $Script:OutputDir $Script:DiagnosisResult.ReportFileName
+            Set-TestJobProgress 86 "HTML rapport schrijven"
+            Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
+            Set-TestJobProgress 93 "Rapport op klembord zetten"
+            $Script:DiagnosisResult.ClipboardOk = Copy-FileToClipboard $reportPath
+            Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
+            Set-TestJobProgress 100 "Rapport openen"
+            Start-Process -FilePath $reportPath
+            $form.Close()
+        } catch {
+            Set-TestJobProgress 100 ("Rapport kon niet worden geopend: {0}" -f $_.Exception.Message)
+            $Script:OpenReportButton.Text = "Open rapport"
+            $Script:OpenReportButton.Enabled = $true
+        }
+    })
+
+    $pollTimer = [System.Windows.Forms.Timer]::new()
+    $pollTimer.Interval = 250
+    $pollTimer.Add_Tick({
+        try {
+            if (Test-Path -LiteralPath $Script:WorkerProgressPath) {
+                $lines = @(Get-Content -LiteralPath $Script:WorkerProgressPath -Encoding UTF8 -ErrorAction SilentlyContinue)
+                while ($Script:WorkerProgressLine -lt $lines.Count) {
+                    $line = $lines[$Script:WorkerProgressLine]
+                    $Script:WorkerProgressLine++
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    try {
+                        $entry = $line | ConvertFrom-Json
+                        Set-TestJobProgress ([int]$entry.Percent) ([string]$entry.Text)
+                    } catch { }
+                }
+            }
+            if ($Script:WorkerProcess -and $Script:WorkerProcess.HasExited) {
+                $pollTimer.Stop()
+                if (Test-Path -LiteralPath $Script:WorkerResultPath) {
+                    $Script:DiagnosisResult = Import-Clixml -LiteralPath $Script:WorkerResultPath
+                    Set-TestJobProgress 84 "Diagnose gereed - controleer gegevens en open rapport"
+                    $Script:OpenReportButton.Text = "Open rapport"
+                    $Script:OpenReportButton.Enabled = $true
+                    $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(31, 161, 143)
+                    $Script:OpenReportButton.ForeColor = [System.Drawing.Color]::White
+                    $Script:OpenReportButton.FlatAppearance.BorderColor = [System.Drawing.Color]::White
+                } else {
+                    Set-TestJobProgress 100 "Diagnose kon niet worden afgerond"
+                    $Script:OpenReportButton.Text = "Geen rapport beschikbaar"
+                }
+            }
+        } catch { }
+    })
+
+    $form.Add_Shown({
+        Set-TestJobProgress 2 "Test-Job diagnose starten"
+        if (-not $Script:ScriptPath -or -not (Test-Path -LiteralPath $Script:ScriptPath)) {
+            Set-TestJobProgress 100 "Geen scriptpad beschikbaar voor achtergrondrun"
+            $Script:OpenReportButton.Text = "Geen rapport beschikbaar"
+            return
+        }
+        $oldHidden = $env:TESTJOB_HIDDEN
+        $oldWorker = $env:TESTJOB_WORKER
+        $oldResult = $env:TESTJOB_RESULT_PATH
+        $oldProgress = $env:TESTJOB_PROGRESS_PATH
+        $oldOutput = $env:TESTJOB_OUTPUT_DIR
+        try {
+            $env:TESTJOB_HIDDEN = "1"
+            $env:TESTJOB_WORKER = "1"
+            $env:TESTJOB_RESULT_PATH = $Script:WorkerResultPath
+            $env:TESTJOB_PROGRESS_PATH = $Script:WorkerProgressPath
+            $env:TESTJOB_OUTPUT_DIR = $Script:OutputDir
+            $Script:WorkerProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @("-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $Script:ScriptPath) -WindowStyle Hidden -PassThru
+        } finally {
+            if ($null -eq $oldHidden) { Remove-Item Env:\TESTJOB_HIDDEN -ErrorAction SilentlyContinue } else { $env:TESTJOB_HIDDEN = $oldHidden }
+            if ($null -eq $oldWorker) { Remove-Item Env:\TESTJOB_WORKER -ErrorAction SilentlyContinue } else { $env:TESTJOB_WORKER = $oldWorker }
+            if ($null -eq $oldResult) { Remove-Item Env:\TESTJOB_RESULT_PATH -ErrorAction SilentlyContinue } else { $env:TESTJOB_RESULT_PATH = $oldResult }
+            if ($null -eq $oldProgress) { Remove-Item Env:\TESTJOB_PROGRESS_PATH -ErrorAction SilentlyContinue } else { $env:TESTJOB_PROGRESS_PATH = $oldProgress }
+            if ($null -eq $oldOutput) { Remove-Item Env:\TESTJOB_OUTPUT_DIR -ErrorAction SilentlyContinue } else { $env:TESTJOB_OUTPUT_DIR = $oldOutput }
+        }
+        $pollTimer.Start()
+    })
+
+    $form.Add_FormClosed({
+        try { if ($pollTimer) { $pollTimer.Stop(); $pollTimer.Dispose() } } catch { }
+        try { if ($Script:WorkerProcess -and -not $Script:WorkerProcess.HasExited) { $Script:WorkerProcess.Kill() } } catch { }
+        Remove-Item -LiteralPath $Script:WorkerResultPath,$Script:WorkerProgressPath -Force -ErrorAction SilentlyContinue
+    })
+
+    [System.Windows.Forms.Application]::Run($form)
 }
 
-Close-TestJobProgressWindow "Rapport gereed"
+if ($env:TESTJOB_WORKER -eq "1") {
+    try {
+        $data = Invoke-TestJobDiagnosis
+        if ($env:TESTJOB_RESULT_PATH) {
+            $data | Export-Clixml -LiteralPath $env:TESTJOB_RESULT_PATH -Encoding UTF8
+        }
+        exit 0
+    } catch {
+        try { Set-TestJobProgress 100 ("Diagnose fout: {0}" -f $_.Exception.Message) } catch { }
+        if ($env:TESTJOB_RESULT_PATH) {
+            [pscustomobject]@{
+                Timestamp = Get-Date
+                Naam = ""
+                Praktijk = ""
+                Ticketnummer = ""
+                Licentie = ""
+                ComputerName = $env:COMPUTERNAME
+                LoggedUser = "$env:USERDOMAIN\$env:USERNAME"
+                Os = [pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" }
+                SystemModel = ""
+                Cpu = [pscustomobject]@{ Name = "Niet beschikbaar"; Cores = 0; Logical = 0; LaunchYear = $null }
+                Memory = [pscustomobject]@{ TotalGb = "?"; AvailableGb = "?"; Percent = "?" }
+                Disks = @()
+                Uptime = [pscustomobject]@{ Text = "-" }
+                FastBoot = $null
+                RebootPending = $null
+                ProxyEnabled = $null
+                WebView2 = [pscustomobject]@{ Installed = $false; Version = "" }
+                DotNet = ""
+                LastWindowsUpdate = ""
+                WindowsInstall = [pscustomobject]@{ Date = ""; Source = "onbekend" }
+                KbUpdates = @()
+                Antivirus = @()
+                SmartAppControl = [pscustomobject]@{ State = "Niet beschikbaar" }
+                ExquiseProcesses = @()
+                IasProcesses = @()
+                Adapters = @()
+                Gateway = ""
+                DnsServers = ""
+                Wan = [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" }
+                Network = [pscustomobject]@{ Extensive = @(); Basic = @(); Failures = @() }
+                Lan = [pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() }
+                EventLogs = @()
+                ExquiseLogs = @()
+                AppChecks = @([pscustomobject]@{ Category = "Diagnose"; Status = "Fout"; Message = $_.Exception.Message; Level = "bad" })
+                Software = @()
+                Updates = @()
+                CollectionErrors = @([pscustomobject]@{ Name = "worker"; Message = $_.Exception.Message })
+                ClipboardOk = $false
+                ReportFileName = ""
+            } | Export-Clixml -LiteralPath $env:TESTJOB_RESULT_PATH -Encoding UTF8
+        }
+        exit 1
+    }
+}
+
+Start-TestJobProgressWindowV2
 
