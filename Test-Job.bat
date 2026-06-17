@@ -304,9 +304,23 @@ function Start-TestJobBatReplacement {
         if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
         @"
 @echo off
-ping 127.0.0.1 -n 4 >nul
-copy /y "$($state.NextBatPath)" "$($state.SelfBatPath)" >nul 2>nul
-del /q "$($state.NextBatPath)" "$($state.NextVersionPath)" "$($state.NextFlagPath)" "$($state.HelperPath)" >nul 2>nul
+setlocal EnableExtensions
+set "SRC=$($state.NextBatPath)"
+set "DST=$($state.SelfBatPath)"
+set "VER=$($state.NextVersionPath)"
+set "FLAG=$($state.NextFlagPath)"
+set "SELF=$($state.HelperPath)"
+set /a TRYCOUNT=0
+:retry
+ping 127.0.0.1 -n 3 >nul
+copy /y "%SRC%" "%DST%" >nul 2>nul
+if not errorlevel 1 goto copied
+set /a TRYCOUNT+=1
+if %TRYCOUNT% LSS 20 goto retry
+goto end
+:copied
+del /q "%SRC%" "%VER%" "%FLAG%" "%SELF%" >nul 2>nul
+:end
 "@ | Set-Content -LiteralPath $state.HelperPath -Encoding ASCII
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c","`"$($state.HelperPath)`"" -WindowStyle Hidden | Out-Null
     } catch {}
@@ -2600,10 +2614,10 @@ function Start-TestJobProgressWindowV2 {
     $intakeTop = 96
     if ($batUpdateState.UpdateAvailable) {
         $updateNotice = [System.Windows.Forms.Label]::new()
-        $updateNotice.Text = "Update beschikbaar: download voor volgend gebruik de nieuwe van Filemail."
+        $updateNotice.Text = "Update beschikbaar: gebruik volgende keer de nieuwe van Filemail."
         $updateNotice.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
         $updateNotice.AutoSize = $false
-        $updateNotice.Size = [System.Drawing.Size]::new(500, 18)
+        $updateNotice.Size = [System.Drawing.Size]::new(470, 18)
         $updateNotice.Location = [System.Drawing.Point]::new(106, 82)
         $updateNotice.ForeColor = [System.Drawing.Color]::FromArgb(244, 185, 66)
         [void]$form.Controls.Add($updateNotice)
