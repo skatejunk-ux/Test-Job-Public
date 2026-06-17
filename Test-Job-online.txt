@@ -226,12 +226,6 @@ function Start-TestJobProgressWindow {
         $headerLogo.Location = [System.Drawing.Point]::new(38, 16)
         [void]$form.Controls.Add($headerLogo)
 
-        $accent = [System.Windows.Forms.Panel]::new()
-        $accent.BackColor = [System.Drawing.Color]::FromArgb(35, 134, 54)
-        $accent.Size = [System.Drawing.Size]::new(6, 544)
-        $accent.Location = [System.Drawing.Point]::new(18, 18)
-        [void]$form.Controls.Add($accent)
-
         $title = [System.Windows.Forms.Label]::new()
         $title.Text = "Test-Job Rapport"
         $title.Font = [System.Drawing.Font]::new("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
@@ -248,14 +242,6 @@ function Start-TestJobProgressWindow {
         $subtitle.Location = [System.Drawing.Point]::new(92, 50)
         $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
         [void]$form.Controls.Add($subtitle)
-
-        $brand = [System.Windows.Forms.Label]::new()
-        $brand.Text = "VERTIMART"
-        $brand.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 9, [System.Drawing.FontStyle]::Bold)
-        $brand.AutoSize = $true
-        $brand.Location = [System.Drawing.Point]::new(530, 22)
-        $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
-        [void]$form.Controls.Add($brand)
 
         function Add-IntakeField {
             param(
@@ -394,16 +380,6 @@ function Start-TestJobProgressWindow {
         $log.ForeColor = [System.Drawing.Color]::FromArgb(215, 221, 229)
         $log.BorderStyle = "FixedSingle"
         [void]$form.Controls.Add($log)
-
-        $footer = [System.Windows.Forms.Label]::new()
-        $footer.Text = "(C) Vertimart - Test-Job standalone diagnose"
-        $footer.Font = [System.Drawing.Font]::new("Segoe UI", 8)
-        $footer.AutoSize = $false
-        $footer.TextAlign = "MiddleRight"
-        $footer.Size = [System.Drawing.Size]::new(560, 22)
-        $footer.Location = [System.Drawing.Point]::new(40, 522)
-        $footer.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
-        [void]$form.Controls.Add($footer)
 
         $Script:ProgressForm = $form
         $Script:ProgressBar = $bar
