@@ -67,6 +67,121 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8
     return $Script:TestJobLogoImage
 }
 
+function Set-IntakePlaceholderState {
+    param(
+        [System.Windows.Forms.TextBox]$TextBox,
+        [string]$Text,
+        [bool]$IsPlaceholder
+    )
+    if (-not $TextBox) { return }
+    $state = $TextBox.Tag
+    if (-not $state) {
+        $state = [pscustomobject]@{
+            Placeholder = $Text
+            IsPlaceholder = $IsPlaceholder
+            NormalizeTicket = $false
+        }
+        $TextBox.Tag = $state
+    } else {
+        $state.Placeholder = $Text
+        $state.IsPlaceholder = $IsPlaceholder
+    }
+    $TextBox.Text = $Text
+    if ($IsPlaceholder) {
+        $TextBox.ForeColor = [System.Drawing.Color]::FromArgb(123, 138, 156)
+    } else {
+        $TextBox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+    }
+}
+
+function Get-IntakeTextValue {
+    param([System.Windows.Forms.TextBox]$TextBox)
+    if (-not $TextBox) { return "" }
+    $state = $TextBox.Tag
+    if ($state -and $state.IsPlaceholder) { return "" }
+    return $TextBox.Text.Trim()
+}
+
+function Format-TicketDigits {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    $digits = -join ($Value.ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    if ($digits.Length -gt 8) { $digits = $digits.Substring(0, 8) }
+    if ($digits.Length -gt 4) {
+        return "{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4)
+    }
+    return $digits
+}
+
+function Initialize-IntakeTextBox {
+    param(
+        [System.Windows.Forms.TextBox]$TextBox,
+        [string]$Placeholder,
+        [switch]$TicketMode
+    )
+    if (-not $TextBox) { return }
+    Set-IntakePlaceholderState -TextBox $TextBox -Text $Placeholder -IsPlaceholder $true
+    $state = $TextBox.Tag
+    if ($TicketMode) {
+        $state.NormalizeTicket = $true
+    }
+
+    $TextBox.Add_Enter({
+        $current = $this.Tag
+        if ($current -and $current.IsPlaceholder) {
+            $this.SelectAll()
+        }
+    })
+
+    $TextBox.Add_KeyPress({
+        $current = $this.Tag
+        if ($current -and $current.IsPlaceholder -and -not [char]::IsControl($_.KeyChar)) {
+            Set-IntakePlaceholderState -TextBox $this -Text "" -IsPlaceholder $false
+        }
+        if ($current -and $current.NormalizeTicket -and -not [char]::IsControl($_.KeyChar)) {
+            if (-not [char]::IsDigit($_.KeyChar) -and $_.KeyChar -ne '-') {
+                $_.Handled = $true
+                return
+            }
+            if ($_.KeyChar -eq '-' -and ($this.Text -match '-')) {
+                $_.Handled = $true
+            }
+        }
+    })
+
+    $TextBox.Add_TextChanged({
+        $current = $this.Tag
+        if (-not $current -or $current.IsPlaceholder) { return }
+        if ($current.NormalizeTicket) {
+            if ($current.Normalizing) { return }
+            $current.Normalizing = $true
+            try {
+                $beforeLength = $this.Text.Length
+                $formatted = Format-TicketDigits $this.Text
+                if ($this.Text -ne $formatted) {
+                    $caret = $this.SelectionStart
+                    $this.Text = $formatted
+                    $afterLength = $this.Text.Length
+                    $this.SelectionStart = [Math]::Max(0, [Math]::Min($afterLength, $caret + ($afterLength - $beforeLength)))
+                }
+            } finally {
+                $current.Normalizing = $false
+            }
+        }
+    })
+
+    $TextBox.Add_Leave({
+        $current = $this.Tag
+        if (-not $current) { return }
+        if ([string]::IsNullOrWhiteSpace($this.Text)) {
+            Set-IntakePlaceholderState -TextBox $this -Text $current.Placeholder -IsPlaceholder $true
+        } else {
+            $current.IsPlaceholder = $false
+            $this.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        }
+    })
+}
+
 function Set-TextBoxCueBanner {
     param(
         [System.Windows.Forms.TextBox]$TextBox,
@@ -369,16 +484,11 @@ function Close-TestJobProgressWindow {
 }
 
 function Get-TestJobIntakeData {
-    $read = {
-        param($Control)
-        if ($Control) { return $Control.Text.Trim() }
-        return ""
-    }
     return [pscustomobject]@{
-        Naam = & $read $Script:IntakeNaam
-        Praktijk = & $read $Script:IntakePraktijk
-        Ticketnummer = & $read $Script:IntakeTicket
-        Licentie = & $read $Script:IntakeLicentie
+        Naam = Get-IntakeTextValue $Script:IntakeNaam
+        Praktijk = Get-IntakeTextValue $Script:IntakePraktijk
+        Ticketnummer = Get-IntakeTextValue $Script:IntakeTicket
+        Licentie = Get-IntakeTextValue $Script:IntakeLicentie
     }
 }
 
@@ -425,15 +535,9 @@ function Limit-FilePart {
 
 function Format-TicketNumber {
     param([string]$Value)
-    $raw = [string]$Value
-    if ([string]::IsNullOrWhiteSpace($raw)) { return "" }
-    $cleaned = $raw.Trim().ToUpperInvariant()
-    if ($cleaned.StartsWith("VM")) {
-        $cleaned = $cleaned.Substring(2).Trim()
-    }
-    $digits = -join ($cleaned.ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    $digits = -join (([string]$Value).ToCharArray() | Where-Object { [char]::IsDigit($_) })
     if ($digits.Length -ne 8) { return "" }
-    return "VM{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4, 4)
+    return "{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4, 4)
 }
 
 function Get-TicketUrl {
@@ -2347,47 +2451,56 @@ function Start-TestJobProgressWindowV2 {
 
     function Add-IntakeFieldV2 {
         param([string]$LabelText, [int]$Left, [int]$Top, [string]$Placeholder, [string]$Marker)
-        $label = [System.Windows.Forms.Label]::new()
-        $label.Text = $LabelText
-        $label.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
-        $label.AutoSize = $true
-        $label.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
-        $label.Location = [System.Drawing.Point]::new($Left, $Top)
-        [void]$intakePanel.Controls.Add($label)
-
         $box = [System.Windows.Forms.Panel]::new()
         $box.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
         $box.BorderStyle = "FixedSingle"
         $box.Size = [System.Drawing.Size]::new(245, 38)
-        $box.Location = [System.Drawing.Point]::new($Left, ($Top + 20))
+        $box.Location = [System.Drawing.Point]::new($Left, $Top)
         [void]$intakePanel.Controls.Add($box)
 
-        $icon = [System.Windows.Forms.Label]::new()
-        $icon.Text = $Marker
-        $icon.Font = [System.Drawing.Font]::new("Segoe UI Symbol", 9)
-        $icon.AutoSize = $false
-        $icon.TextAlign = "MiddleCenter"
-        $icon.Size = [System.Drawing.Size]::new(28, 24)
-        $icon.Location = [System.Drawing.Point]::new(8, 6)
-        $icon.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
-        [void]$box.Controls.Add($icon)
+        $hasMarker = -not [string]::IsNullOrWhiteSpace($Marker)
+        if ($hasMarker) {
+            $badge = [System.Windows.Forms.Panel]::new()
+            $badge.BackColor = [System.Drawing.Color]::FromArgb(18, 31, 47)
+            $badge.Size = [System.Drawing.Size]::new(38, 26)
+            $badge.Location = [System.Drawing.Point]::new(8, 5)
+            [void]$box.Controls.Add($badge)
+
+            $icon = [System.Windows.Forms.Label]::new()
+            $icon.Text = $Marker
+            $icon.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
+            $icon.AutoSize = $false
+            $icon.TextAlign = "MiddleCenter"
+            $icon.Size = [System.Drawing.Size]::new(38, 26)
+            $icon.Location = [System.Drawing.Point]::new(0, 0)
+            $icon.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
+            [void]$badge.Controls.Add($icon)
+        }
 
         $textbox = [System.Windows.Forms.TextBox]::new()
         $textbox.Font = [System.Drawing.Font]::new("Segoe UI", 9)
-        $textbox.Size = [System.Drawing.Size]::new(200, 22)
-        $textbox.Location = [System.Drawing.Point]::new(38, 8)
+        if ($hasMarker) {
+            $textbox.Size = [System.Drawing.Size]::new(184, 22)
+            $textbox.Location = [System.Drawing.Point]::new(52, 8)
+        } else {
+            $textbox.Size = [System.Drawing.Size]::new(220, 22)
+            $textbox.Location = [System.Drawing.Point]::new(12, 8)
+        }
         $textbox.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
         $textbox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
         $textbox.BorderStyle = "None"
         [void]$box.Controls.Add($textbox)
-        Set-TextBoxCueBanner -TextBox $textbox -Text $Placeholder
         return $textbox
     }
 
-    $Script:IntakeNaam = Add-IntakeFieldV2 "Naam" 20 18 "Bijv. Jan Jansen" "o"
-    $Script:IntakePraktijk = Add-IntakeFieldV2 "Praktijk" 292 18 "Bijv. Praktijk-X" "#"
-    $Script:IntakeTicket = Add-IntakeFieldV2 "Ticketnummer" 20 92 "Bijv. VM1234-5678" ">"
-    $Script:IntakeLicentie = Add-IntakeFieldV2 "Licentie" 292 92 "Bijv. LIC-12345" ">"
+    $Script:IntakeNaam = Add-IntakeFieldV2 "Naam" 20 18 "Naam" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakeNaam -Placeholder "Naam"
+    $Script:IntakePraktijk = Add-IntakeFieldV2 "Praktijk" 292 18 "Praktijk" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakePraktijk -Placeholder "Praktijk"
+    $Script:IntakeTicket = Add-IntakeFieldV2 "Ticketnummer" 20 92 "Ticketnummer" "VM"
+    Initialize-IntakeTextBox -TextBox $Script:IntakeTicket -Placeholder "Ticketnummer" -TicketMode
+    $Script:IntakeLicentie = Add-IntakeFieldV2 "Licentie" 292 92 "Licentie" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakeLicentie -Placeholder "Licentie"
 
     $stepCard = [System.Windows.Forms.Panel]::new()
     $stepCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
