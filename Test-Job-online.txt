@@ -353,10 +353,11 @@ function Get-TicketUrl {
 function Get-ReportFileName {
     param([object]$InputData)
     $parts = @()
+    $ticket = Limit-FilePart (Format-TicketNumber $InputData.Ticketnummer) 20
     $praktijk = Limit-FilePart $InputData.Praktijk 40
     $naam = Limit-FilePart $InputData.Naam 40
     $licentie = Limit-FilePart $InputData.Licentie 28
-    foreach ($part in @($praktijk, $naam, $licentie)) {
+    foreach ($part in @($ticket, $praktijk, $naam, $licentie)) {
         if ($part) { $parts += $part }
     }
     $prefix = if ($parts.Count) { ($parts -join "_") + "_" } else { "" }
@@ -369,7 +370,6 @@ function Show-TestJobStartForm {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
-    $result = $null
     $form = [System.Windows.Forms.Form]::new()
     $form.Text = "Test-Job Diagnose"
     $form.StartPosition = "CenterScreen"
@@ -384,7 +384,7 @@ function Show-TestJobStartForm {
     $card = [System.Windows.Forms.Panel]::new()
     $card.BackColor = [System.Drawing.Color]::FromArgb(19, 28, 39)
     $card.BorderStyle = "FixedSingle"
-    $card.Size = [System.Drawing.Size]::new(400, 675)
+    $card.Size = [System.Drawing.Size]::new(400, 725)
     $card.Location = [System.Drawing.Point]::new(28, 44)
     [void]$form.Controls.Add($card)
 
@@ -470,12 +470,13 @@ function Show-TestJobStartForm {
 
     $txtNaam = New-Field "Naam" 230 "" "Bijv. Jan Jansen" "o"
     $txtPraktijk = New-Field "Praktijk" 338 "" "Bijv. Praktijk-X" "#"
-    $txtLicentie = New-Field "Licentie" 446 "" "Bijv. LIC-12345" ">"
+    $txtTicket = New-Field "Ticketnummer" 446 "" "Bijv. VM1234-5678" ">"
+    $txtLicentie = New-Field "Licentie" 554 "" "Bijv. LIC-12345" ">"
 
     $startButton = [System.Windows.Forms.Button]::new()
     $startButton.Text = "Start diagnose"
     $startButton.Size = [System.Drawing.Size]::new(360, 50)
-    $startButton.Location = [System.Drawing.Point]::new(20, 532)
+    $startButton.Location = [System.Drawing.Point]::new(20, 640)
     $startButton.FlatStyle = "Flat"
     $startButton.BackColor = [System.Drawing.Color]::FromArgb(26, 170, 160)
     $startButton.ForeColor = [System.Drawing.Color]::White
@@ -485,7 +486,7 @@ function Show-TestJobStartForm {
     $dividerBottom = [System.Windows.Forms.Panel]::new()
     $dividerBottom.BackColor = [System.Drawing.Color]::FromArgb(48, 54, 61)
     $dividerBottom.Size = [System.Drawing.Size]::new(328, 1)
-    $dividerBottom.Location = [System.Drawing.Point]::new(36, 600)
+    $dividerBottom.Location = [System.Drawing.Point]::new(36, 708)
     [void]$card.Controls.Add($dividerBottom)
 
     $infoTag = [System.Windows.Forms.Label]::new()
@@ -494,7 +495,7 @@ function Show-TestJobStartForm {
     $infoTag.AutoSize = $false
     $infoTag.TextAlign = "MiddleCenter"
     $infoTag.Size = [System.Drawing.Size]::new(24, 24)
-    $infoTag.Location = [System.Drawing.Point]::new(22, 618)
+    $infoTag.Location = [System.Drawing.Point]::new(22, 726)
     $infoTag.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
     [void]$card.Controls.Add($infoTag)
 
@@ -503,14 +504,15 @@ function Show-TestJobStartForm {
     $infoText.Font = [System.Drawing.Font]::new("Segoe UI", 10)
     $infoText.AutoSize = $false
     $infoText.Size = [System.Drawing.Size]::new(320, 42)
-    $infoText.Location = [System.Drawing.Point]::new(54, 616)
+    $infoText.Location = [System.Drawing.Point]::new(54, 724)
     $infoText.ForeColor = [System.Drawing.Color]::FromArgb(166, 176, 188)
     [void]$card.Controls.Add($infoText)
 
     $startButton.Add_Click({
-        $result = [pscustomobject]@{
+        $form.Tag = [pscustomobject]@{
             Naam = $txtNaam.Text.Trim()
             Praktijk = $txtPraktijk.Text.Trim()
+            Ticketnummer = $txtTicket.Text.Trim()
             Licentie = $txtLicentie.Text.Trim()
         }
         $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -519,6 +521,7 @@ function Show-TestJobStartForm {
 
     $form.AcceptButton = $startButton
     $dialogResult = $form.ShowDialog()
+    $result = $form.Tag
     $form.Dispose()
     if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
     return $result
@@ -1763,7 +1766,16 @@ function Write-TestJobHtmlReport {
     $eventLogEscaped = HtmlEncode (EventLogText $Data.EventLogs)
     $exquiseLogCards = ExquiseLogCardsHtml $Data.ExquiseLogs
     $generated = (Get-Date).ToString("dd MMM yyyy HH:mm")
+    $ticketFormatted = Format-TicketNumber $Data.Ticketnummer
+    $ticketHtml = if ($ticketFormatted) {
+        "<a href='$(AttrEncode (Get-TicketUrl $ticketFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $ticketFormatted)</a>"
+    } elseif ($Data.Ticketnummer) {
+        HtmlEncode $Data.Ticketnummer
+    } else {
+        ""
+    }
     $metaParts = @()
+    if ($ticketHtml) { $metaParts += "<span><strong>Ticket</strong> $ticketHtml</span>" }
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($Data.Licentie) { $metaParts += "<span><strong>Licentie</strong> $(HtmlEncode $Data.Licentie)</span>" }
