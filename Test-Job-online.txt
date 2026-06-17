@@ -353,10 +353,10 @@ function Get-TicketUrl {
 function Get-ReportFileName {
     param([object]$InputData)
     $parts = @()
-    $ticket = Limit-FilePart (Format-TicketNumber $InputData.Ticketnummer) 20
     $praktijk = Limit-FilePart $InputData.Praktijk 40
     $naam = Limit-FilePart $InputData.Naam 40
-    foreach ($part in @($ticket, $praktijk, $naam)) {
+    $licentie = Limit-FilePart $InputData.Licentie 28
+    foreach ($part in @($praktijk, $naam, $licentie)) {
         if ($part) { $parts += $part }
     }
     $prefix = if ($parts.Count) { ($parts -join "_") + "_" } else { "" }
@@ -468,10 +468,9 @@ function Show-TestJobStartForm {
         return $textbox
     }
 
-    $defaultName = if ($env:USERNAME) { $env:USERNAME } else { "" }
-    $txtNaam = New-Field "Naam" 230 $defaultName "Bijv. Jan Jansen" "o"
+    $txtNaam = New-Field "Naam" 230 "" "Bijv. Jan Jansen" "o"
     $txtPraktijk = New-Field "Praktijk" 338 "" "Bijv. Praktijk-X" "#"
-    $txtTicket = New-Field "Ticketnummer" 446 "" "Bijv. VM1234-5678" ">"
+    $txtLicentie = New-Field "Licentie" 446 "" "Bijv. LIC-12345" ">"
 
     $startButton = [System.Windows.Forms.Button]::new()
     $startButton.Text = "Start diagnose"
@@ -512,7 +511,7 @@ function Show-TestJobStartForm {
         $result = [pscustomobject]@{
             Naam = $txtNaam.Text.Trim()
             Praktijk = $txtPraktijk.Text.Trim()
-            Ticketnummer = $txtTicket.Text.Trim()
+            Licentie = $txtLicentie.Text.Trim()
         }
         $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $form.Close()
@@ -1764,18 +1763,10 @@ function Write-TestJobHtmlReport {
     $eventLogEscaped = HtmlEncode (EventLogText $Data.EventLogs)
     $exquiseLogCards = ExquiseLogCardsHtml $Data.ExquiseLogs
     $generated = (Get-Date).ToString("dd MMM yyyy HH:mm")
-    $ticketFormatted = Format-TicketNumber $Data.Ticketnummer
-    $ticketHtml = if ($ticketFormatted) {
-        "<a href='$(AttrEncode (Get-TicketUrl $ticketFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $ticketFormatted)</a>"
-    } elseif ($Data.Ticketnummer) {
-        HtmlEncode $Data.Ticketnummer
-    } else {
-        "<span class='muted'>Niet ingevuld</span>"
-    }
     $metaParts = @()
-    if ($ticketFormatted -or $Data.Ticketnummer) { $metaParts += "<span><strong>Ticket</strong> $ticketHtml</span>" }
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
+    if ($Data.Licentie) { $metaParts += "<span><strong>Licentie</strong> $(HtmlEncode $Data.Licentie)</span>" }
     $metaHtml = if ($metaParts.Count) { $metaParts -join "<span class='meta-sep'>??</span>" } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
@@ -2126,7 +2117,7 @@ $data = [pscustomobject]@{
     Timestamp = Get-Date
     Naam = $formData.Naam
     Praktijk = $formData.Praktijk
-    Ticketnummer = $formData.Ticketnummer
+    Licentie = $formData.Licentie
     ComputerName = Invoke-SafeCheck "computer_name" { $env:COMPUTERNAME } ""
     LoggedUser = Invoke-SafeCheck "logged_user" { "$env:USERDOMAIN\$env:USERNAME" } ""
     Os = Invoke-SafeCheck "os_info" { Get-OsInfo } ([pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" })
