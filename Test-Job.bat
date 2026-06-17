@@ -161,6 +161,7 @@ function Set-IntakePlaceholderState {
             Placeholder = $Text
             IsPlaceholder = $IsPlaceholder
             NormalizeTicket = $false
+            Normalizing = $false
         }
         $TextBox.Tag = $state
     } else {
