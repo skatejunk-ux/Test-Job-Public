@@ -622,10 +622,23 @@ function Format-TicketNumber {
     return "{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4, 4)
 }
 
+function Format-LicenseNumber {
+    param([string]$Value)
+    $digits = -join (([string]$Value).ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    if ($digits.Length -lt 2 -or $digits.Length -gt 10) { return "" }
+    return $digits
+}
+
 function Get-TicketUrl {
     param([string]$Ticket)
     if (-not $Ticket) { return "" }
     return "https://vertimart.topdesk.net/tas/secure/incident?action=lookup&lookup=naam&lookupValue=$Ticket"
+}
+
+function Get-LicenseUrl {
+    param([string]$LicenseNumber)
+    if (-not $LicenseNumber) { return "" }
+    return "https://devops.vertimart.nl/Licenties/Productie/View/$LicenseNumber"
 }
 
 function Get-ReportFileName {
@@ -634,7 +647,7 @@ function Get-ReportFileName {
     $ticket = Limit-FilePart (Format-TicketNumber $InputData.Ticketnummer) 20
     $praktijk = Limit-FilePart $InputData.Praktijk 40
     $naam = Limit-FilePart $InputData.Naam 40
-    $licentie = Limit-FilePart $InputData.Licentie 28
+    $licentie = Limit-FilePart ((Format-LicenseNumber $InputData.Licentie), $InputData.Licentie | Where-Object { $_ } | Select-Object -First 1) 28
     foreach ($part in @($ticket, $praktijk, $naam, $licentie)) {
         if ($part) { $parts += $part }
     }
@@ -2051,11 +2064,19 @@ function Write-TestJobHtmlReport {
     } else {
         ""
     }
+    $licenseFormatted = Format-LicenseNumber $Data.Licentie
+    $licenseHtml = if ($licenseFormatted) {
+        "<a href='$(AttrEncode (Get-LicenseUrl $licenseFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $licenseFormatted)</a>"
+    } elseif ($Data.Licentie) {
+        HtmlEncode $Data.Licentie
+    } else {
+        ""
+    }
     $metaParts = @()
     if ($ticketHtml) { $metaParts += "<span><strong>Ticket</strong> $ticketHtml</span>" }
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
-    if ($Data.Licentie) { $metaParts += "<span><strong>Licentie</strong> $(HtmlEncode $Data.Licentie)</span>" }
+    if ($licenseHtml) { $metaParts += "<span><strong>Licentie</strong> $licenseHtml</span>" }
     $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
