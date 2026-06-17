@@ -1,0 +1,2434 @@
+$ErrorActionPreference = "Stop"
+# TESTJOB_ONLINE_SENTINEL: TESTJOB_PS1_V1
+
+if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocation.MyCommand.Path) {
+    $env:TESTJOB_HIDDEN = "1"
+    $args = @("-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $MyInvocation.MyCommand.Path)
+    Start-Process -FilePath "powershell.exe" -ArgumentList $args -WindowStyle Hidden | Out-Null
+    return
+}
+
+$Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "" }
+$Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
+$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
+$Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
+    (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
+} elseif ($MyInvocation.MyCommand.Definition) {
+    Split-Path -Parent $MyInvocation.MyCommand.Definition
+} else {
+    (Get-Location).Path
+}
+$Script:LaunchSource = if ($env:TESTJOB_RUN_SOURCE) { $env:TESTJOB_RUN_SOURCE } else { "embedded" }
+$Script:DomainsExtensive = @(
+    "exquise.nl",
+    "authorization.app.exquise.nl/health",
+    "hygia.app.exquise.nl/health",
+    "ivory.app.exquise.nl/health",
+    "jaws.app.exquise.nl/health",
+    "klean.app.exquise.nl/health",
+    "luma.app.exquise.nl/health",
+    "molar.app.exquise.nl/health",
+    "status.exquise.nl",
+    "aanmeldfunctie.exquise.nl",
+    "login.microsoftonline.com"
+)
+$Script:DomainsBasic = @(
+    "realtimehub.app.exquise.nl",
+    "stexquiseiacmainprod.blob.core.windows.net",
+    "stexquiseiacpublicprod.blob.core.windows.net",
+    "management.azure.com",
+    "graph.windows.net"
+)
+$Script:TrustedIssuers = @("DigiCert", "GlobalSign", "Sectigo", "Microsoft", "Let's Encrypt", "Cloudflare")
+$Script:SonosOuis = @(
+    "00:04:3C", "00:0E:58", "34:7E:5C", "38:42:0B", "48:A6:B8", "54:2A:1B",
+    "5C:AA:FD", "74:CA:60", "78:28:CA", "80:4A:F2", "94:9F:3E", "B8:E9:37",
+    "C4:38:75", "EA:BE:A7", "F0:F6:C1", "F8:5C:24"
+)
+$Script:YealinkOuis = @(
+    "00:15:65", "24:9A:D8", "34:97:D7", "44:DB:D2", "64:4F:56", "80:5E:0C",
+    "80:5E:C0", "B0:61:A9", "C4:FC:22", "EC:1D:A9", "F0:16:53"
+)
+
+Set-Location -Path $Script:OutputDir
+
+function Get-TestJobLogoImage {
+    if ($Script:TestJobLogoImage) { return $Script:TestJobLogoImage }
+    $base64 = @'
+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
+'@
+    $bytes = [Convert]::FromBase64String($base64)
+    $stream = New-Object System.IO.MemoryStream(,$bytes)
+    $image = [System.Drawing.Image]::FromStream($stream)
+    $bitmap = New-Object System.Drawing.Bitmap $image
+    $image.Dispose()
+    $stream.Dispose()
+    $Script:TestJobLogoImage = $bitmap
+    return $Script:TestJobLogoImage
+}
+
+function Set-IntakePlaceholderState {
+    param(
+        [System.Windows.Forms.TextBox]$TextBox,
+        [string]$Text,
+        [bool]$IsPlaceholder
+    )
+    if (-not $TextBox) { return }
+    $state = $TextBox.Tag
+    if (-not $state) {
+        $state = [pscustomobject]@{
+            Placeholder = $Text
+            IsPlaceholder = $IsPlaceholder
+            NormalizeTicket = $false
+            Normalizing = $false
+        }
+        $TextBox.Tag = $state
+    } else {
+        $state.Placeholder = $Text
+        $state.IsPlaceholder = $IsPlaceholder
+    }
+    $TextBox.Text = $Text
+    if ($IsPlaceholder) {
+        $TextBox.ForeColor = [System.Drawing.Color]::FromArgb(123, 138, 156)
+    } else {
+        $TextBox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+    }
+}
+
+function Get-IntakeTextValue {
+    param([System.Windows.Forms.TextBox]$TextBox)
+    if (-not $TextBox) { return "" }
+    $state = $TextBox.Tag
+    if ($state -and $state.IsPlaceholder) { return "" }
+    return $TextBox.Text.Trim()
+}
+
+function Format-TicketDigits {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    $digits = -join ($Value.ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    if ($digits.Length -gt 8) { $digits = $digits.Substring(0, 8) }
+    if ($digits.Length -gt 4) {
+        return "{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4)
+    }
+    return $digits
+}
+
+function Initialize-IntakeTextBox {
+    param(
+        [System.Windows.Forms.TextBox]$TextBox,
+        [string]$Placeholder,
+        [switch]$TicketMode
+    )
+    if (-not $TextBox) { return }
+    Set-IntakePlaceholderState -TextBox $TextBox -Text $Placeholder -IsPlaceholder $true
+    $state = $TextBox.Tag
+    if ($TicketMode) {
+        $state.NormalizeTicket = $true
+    }
+
+    $TextBox.Add_Enter({
+        $current = $this.Tag
+        if ($current -and $current.IsPlaceholder) {
+            $this.SelectAll()
+        }
+    })
+
+    $TextBox.Add_KeyPress({
+        $current = $this.Tag
+        if ($current -and $current.IsPlaceholder -and -not [char]::IsControl($_.KeyChar)) {
+            Set-IntakePlaceholderState -TextBox $this -Text "" -IsPlaceholder $false
+        }
+        if ($current -and $current.NormalizeTicket -and -not [char]::IsControl($_.KeyChar)) {
+            if (-not [char]::IsDigit($_.KeyChar) -and $_.KeyChar -ne '-') {
+                $_.Handled = $true
+                return
+            }
+            if ($_.KeyChar -eq '-' -and ($this.Text -match '-')) {
+                $_.Handled = $true
+            }
+        }
+    })
+
+    $TextBox.Add_TextChanged({
+        $current = $this.Tag
+        if (-not $current -or $current.IsPlaceholder) { return }
+        if ($current.NormalizeTicket) {
+            if ($current.Normalizing) { return }
+            $current.Normalizing = $true
+            try {
+                $beforeLength = $this.Text.Length
+                $formatted = Format-TicketDigits $this.Text
+                if ($this.Text -ne $formatted) {
+                    $caret = $this.SelectionStart
+                    $this.Text = $formatted
+                    $afterLength = $this.Text.Length
+                    $this.SelectionStart = [Math]::Max(0, [Math]::Min($afterLength, $caret + ($afterLength - $beforeLength)))
+                }
+            } finally {
+                $current.Normalizing = $false
+            }
+        }
+    })
+
+    $TextBox.Add_Leave({
+        $current = $this.Tag
+        if (-not $current) { return }
+        if ([string]::IsNullOrWhiteSpace($this.Text)) {
+            Set-IntakePlaceholderState -TextBox $this -Text $current.Placeholder -IsPlaceholder $true
+        } else {
+            $current.IsPlaceholder = $false
+            $this.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        }
+    })
+}
+
+function Set-TestJobProgress {
+    param(
+        [int]$Percent,
+        [string]$Text
+    )
+    if ($env:TESTJOB_WORKER -eq "1" -and $env:TESTJOB_PROGRESS_PATH) {
+        try {
+            $entry = [pscustomobject]@{
+                Time = (Get-Date).ToString("HH:mm:ss")
+                Percent = [Math]::Max(0, [Math]::Min(100, $Percent))
+                Text = $Text
+            }
+            Add-Content -LiteralPath $env:TESTJOB_PROGRESS_PATH -Value ($entry | ConvertTo-Json -Compress) -Encoding UTF8
+        } catch {}
+        return
+    }
+    if (-not $Script:ProgressForm) { return }
+    $update = {
+        param([int]$p, [string]$t)
+        try {
+            $value = [math]::Max(0, [math]::Min(100, $p))
+            $Script:ProgressBar.Value = $value
+            $Script:ProgressStatus.Text = $t
+            if ($Script:ProgressPercent) { $Script:ProgressPercent.Text = "$value%" }
+            if ($Script:ProgressPhases) {
+                for ($i = 0; $i -lt $Script:ProgressPhases.Count; $i++) {
+                    $phaseBoundary = @(0, 20, 38, 55, 72, 86)[$i]
+                    if ($value -ge $phaseBoundary) {
+                        $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
+                    } else {
+                        $Script:ProgressPhases[$i].ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
+                    }
+                }
+                if ($value -ge 42 -and $value -lt 58) { $Script:ProgressPhases[2].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 58 -and $value -lt 70) { $Script:ProgressPhases[3].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 70 -and $value -lt 86) { $Script:ProgressPhases[4].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+                elseif ($value -ge 86 -and $value -lt 100) { $Script:ProgressPhases[5].ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255) }
+            }
+            if ($Script:ProgressLog) {
+                $line = "{0:HH:mm:ss}  {1}" -f (Get-Date), $t
+                $Script:ProgressLog.AppendText($line + [Environment]::NewLine)
+                $Script:ProgressLog.SelectionStart = $Script:ProgressLog.TextLength
+                $Script:ProgressLog.ScrollToCaret()
+            }
+        } catch {}
+    }
+    try {
+        if ($Script:ProgressForm.InvokeRequired) {
+            [void]$Script:ProgressForm.BeginInvoke($update, @($Percent, $Text))
+        } else {
+            & $update $Percent $Text
+        }
+    } catch {}
+}
+
+function Close-TestJobProgressWindow {
+    param([string]$Text = "Gereed")
+    if (-not $Script:ProgressForm) { return }
+    try {
+        Set-TestJobProgress 100 $Text
+        Start-Sleep -Milliseconds 700
+        $Script:ProgressForm.Close()
+        $Script:ProgressForm.Dispose()
+    } catch {}
+}
+
+function Get-TestJobIntakeData {
+    return [pscustomobject]@{
+        Naam = Get-IntakeTextValue $Script:IntakeNaam
+        Praktijk = Get-IntakeTextValue $Script:IntakePraktijk
+        Ticketnummer = Get-IntakeTextValue $Script:IntakeTicket
+        Licentie = Get-IntakeTextValue $Script:IntakeLicentie
+    }
+}
+
+function HtmlEncode {
+    param([object]$Value)
+    if ($null -eq $Value) { return "" }
+    return [System.Net.WebUtility]::HtmlEncode([string]$Value)
+}
+
+function AttrEncode {
+    param([object]$Value)
+    return (HtmlEncode $Value).Replace("'", "&#39;")
+}
+
+function Format-ShortDate {
+    param([object]$Value)
+    if (-not $Value) { return "" }
+    try {
+        $dt = [datetime]$Value
+        return $dt.ToString("dd MMM yyyy")
+    } catch {
+        return [string]$Value
+    }
+}
+
+function Format-FilePart {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    $clean = (($Value.Trim()) -replace '[\\/:*?"<>|\s]+', '-')
+    $clean = ($clean -replace '-{2,}', '-').Trim('-')
+    return $clean
+}
+
+function Limit-FilePart {
+    param(
+        [string]$Value,
+        [int]$MaxLength = 40
+    )
+    $clean = Format-FilePart $Value
+    if (-not $clean) { return "" }
+    if ($clean.Length -le $MaxLength) { return $clean }
+    return $clean.Substring(0, $MaxLength).Trim('-')
+}
+
+function Format-TicketNumber {
+    param([string]$Value)
+    $digits = -join (([string]$Value).ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    if ($digits.Length -ne 8) { return "" }
+    return "{0}-{1}" -f $digits.Substring(0, 4), $digits.Substring(4, 4)
+}
+
+function Format-LicenseNumber {
+    param([string]$Value)
+    $digits = -join (([string]$Value).ToCharArray() | Where-Object { [char]::IsDigit($_) })
+    if ($digits.Length -lt 2 -or $digits.Length -gt 10) { return "" }
+    return $digits
+}
+
+function Get-TicketUrl {
+    param([string]$Ticket)
+    if (-not $Ticket) { return "" }
+    return "https://vertimart.topdesk.net/tas/secure/incident?action=lookup&lookup=naam&lookupValue=$Ticket"
+}
+
+function Get-LicenseUrl {
+    param([string]$LicenseNumber)
+    if (-not $LicenseNumber) { return "" }
+    return "https://devops.vertimart.nl/Licenties/Productie/View/$LicenseNumber"
+}
+
+function Get-ReportFileName {
+    param($InputData)
+
+    $ticketPart = Limit-FilePart (Format-TicketNumber $InputData.Ticketnummer) 20
+    $practicePart = Limit-FilePart $InputData.Praktijk 30
+    $namePart = Limit-FilePart $InputData.Naam 30
+
+    $licensePart = Format-LicenseNumber $InputData.Licentie
+    if (-not $licensePart) {
+        $licensePart = $InputData.Licentie
+    }
+    $licensePart = Limit-FilePart $licensePart 28
+
+    $parts = @($ticketPart, $practicePart, $namePart, $licensePart) | Where-Object { $_ }
+    if ($parts.Count -eq 0) {
+        return 'Test-Job_Rapport.html'
+    }
+
+    return ((($parts -join '_') + '_Test-Job_Rapport.html') -replace '_+', '_')
+}
+
+function New-Status {
+    param(
+        [string]$Text,
+        [string]$Class = "ok"
+    )
+    return "<span class='status $Class'>$(HtmlEncode $Text)</span>"
+}
+
+function Get-WorstClass {
+    param([string[]]$Classes)
+    $rank = @{ muted = 0; ok = 1; warn = 2; bad = 3 }
+    $winner = "muted"
+    foreach ($cls in $Classes) {
+        $name = if ($cls) { $cls } else { "muted" }
+        if ($rank[$name] -gt $rank[$winner]) { $winner = $name }
+    }
+    return $winner
+}
+
+function Get-CpuAgeClass {
+    param([object]$Year)
+    if (-not $Year) { return "muted" }
+    $age = (Get-Date).Year - [int]$Year
+    if ($age -lt 6) { return "ok" }
+    if ($age -le 8) { return "warn" }
+    return "bad"
+}
+
+function Get-UptimeClass {
+    param([object]$Days)
+    if ($null -eq $Days) { return "muted" }
+    if ([int]$Days -ge 1) { return "bad" }
+    return "ok"
+}
+
+function Get-ProxyClass {
+    param([object]$Enabled)
+    if ($null -eq $Enabled) { return "muted" }
+    if ($Enabled) { return "bad" }
+    return "ok"
+}
+
+function Get-OsClass {
+    param([object]$Os)
+    if (-not $Os) { return "muted" }
+    $full = [string]$Os.Full
+    if ($full -match "Windows 11") { return "ok" }
+    if ($full -match "Windows") { return "bad" }
+    return "muted"
+}
+
+function Get-LastUpdateClass {
+    param([object]$Value)
+    if (-not $Value) { return "muted" }
+    try {
+        $days = ((Get-Date) - ([datetime]$Value)).TotalDays
+        if ($days -gt 45) { return "bad" }
+        if ($days -gt 21) { return "warn" }
+        return "ok"
+    } catch {
+        return "muted"
+    }
+}
+
+function Get-DnsStatusClass {
+    param([string]$Value)
+    if (-not $Value) { return "muted" }
+    if ($Value -eq "Succesvol") { return "ok" }
+    return "bad"
+}
+
+function Get-PortStatusClass {
+    param([string]$Value)
+    if (-not $Value) { return "muted" }
+    if ($Value -eq "Open") { return "ok" }
+    if ($Value -eq "Geblokkeerd") { return "bad" }
+    return "warn"
+}
+
+function Get-TlsStatusClass {
+    param([string]$Value)
+    if (-not $Value) { return "muted" }
+    if ($Value -eq "OK") { return "ok" }
+    return "bad"
+}
+
+function Get-HttpStatusClass {
+    param([string]$Value)
+    if (-not $Value) { return "muted" }
+    if ($Value -match "^OK") { return "ok" }
+    return "bad"
+}
+
+function Get-LatencyClass {
+    param([object]$Ms)
+    if ($null -eq $Ms -or [int]$Ms -lt 0) { return "bad" }
+    if ([int]$Ms -gt 200) { return "warn" }
+    return "ok"
+}
+
+function Get-AdapterSpeedClass {
+    param([int]$SpeedMbps)
+    if ($SpeedMbps -ge 1000) { return "ok" }
+    if ($SpeedMbps -ge 100) { return "warn" }
+    if ($SpeedMbps -gt 0) { return "bad" }
+    return "muted"
+}
+
+function Get-DefaultAdapterClass {
+    param([bool]$IsDefault)
+    if ($IsDefault) { return "ok" }
+    return "muted"
+}
+
+function Get-AdapterWifiClass {
+    param([bool]$IsWifi, [bool]$IsDefault)
+    if (-not $IsWifi) { return "muted" }
+    return "warn"
+}
+
+function Invoke-SafeCheck {
+    param(
+        [string]$Name,
+        [scriptblock]$ScriptBlock,
+        [object]$Default = $null
+    )
+    try {
+        return & $ScriptBlock
+    } catch {
+        [void]$Script:CollectionErrors.Add([pscustomobject]@{
+            Source = $Name
+            Error = $_.Exception.Message
+            Type = $_.Exception.GetType().Name
+        })
+        return $Default
+    }
+}
+
+function Get-FunctionSource {
+    param([string]$Name)
+    return (Get-Command $Name -CommandType Function -ErrorAction Stop).ScriptBlock.ToString()
+}
+
+function Invoke-ParallelTaskScripts {
+    param(
+        [object[]]$Tasks,
+        [int]$MaxWorkers = 6
+    )
+
+    $results = @{}
+    if (-not $Tasks -or $Tasks.Count -eq 0) { return $results }
+
+    $pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $MaxWorkers)
+    $pool.Open()
+    $jobs = @()
+    try {
+        foreach ($task in $Tasks) {
+            $ps = [powershell]::Create()
+            $null = $ps.AddScript($task.ScriptText)
+            $taskArgs = @()
+            if ($null -ne $task.Arguments) {
+                $taskArgs = @($task.Arguments)
+            }
+            foreach ($arg in $taskArgs) {
+                $null = $ps.AddArgument($arg)
+            }
+            $ps.RunspacePool = $pool
+            $jobs += [pscustomobject]@{
+                Name = $task.Name
+                Pipe = $ps
+                Result = $ps.BeginInvoke()
+                Default = $task.Default
+            }
+        }
+
+        foreach ($job in $jobs) {
+            try {
+                $output = $job.Pipe.EndInvoke($job.Result)
+                $results[$job.Name] = @($output)
+            } catch {
+                [void]$Script:CollectionErrors.Add([pscustomobject]@{
+                    Source = $job.Name
+                    Error = $_.Exception.Message
+                    Type = $_.Exception.GetType().Name
+                })
+                $results[$job.Name] = $job.Default
+            } finally {
+                $job.Pipe.Dispose()
+            }
+        }
+    } finally {
+        $pool.Close()
+        $pool.Dispose()
+    }
+    return $results
+}
+
+function Get-RegValue {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [object]$Default = $null
+    )
+    try {
+        $item = Get-ItemProperty -Path $Path -ErrorAction Stop
+        if ($null -ne $item.$Name) { return $item.$Name }
+    } catch {}
+    return $Default
+}
+
+function Get-HostFromEndpoint {
+    param([string]$Endpoint)
+    return (($Endpoint -split "/")[0]).Trim()
+}
+
+function Get-OsInfo {
+    $os = Get-CimInstance Win32_OperatingSystem
+    $build = [int]$os.BuildNumber
+    $winVer = ""
+    $feature = ""
+    if ($build -ge 22000) { $winVer = "11" }
+    elseif ($build -ge 10240) { $winVer = "10" }
+    if ($build -ge 28000) { $feature = "26H1" }
+    elseif ($build -ge 26300) { $feature = "26H2" }
+    elseif ($build -ge 26200) { $feature = "25H2" }
+    elseif ($build -ge 26100) { $feature = "24H2" }
+    elseif ($build -ge 22631) { $feature = "23H2" }
+    elseif ($build -ge 22621) { $feature = "22H2" }
+    elseif ($build -ge 22000) { $feature = "21H2" }
+    elseif ($build -ge 19045) { $feature = "22H2" }
+
+    $full = if ($winVer) {
+        "Windows $winVer $(if ($feature) { $feature }) (build $build)"
+    } else {
+        "$($os.Caption) (build $build)"
+    }
+    [pscustomobject]@{
+        Full = ($full -replace "\s+", " ").Trim()
+        Caption = $os.Caption
+        Build = $build
+        Version = $os.Version
+        InstallDate = $os.InstallDate
+        LastBoot = $os.LastBootUpTime
+    }
+}
+
+function Get-CpuInfo {
+    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $name = ($cpu.Name -replace "\s+", " ").Trim()
+    $generation = 0
+    $year = $null
+    if ($name -match "Intel.*Ultra") {
+        $generation = 15
+        $year = 2023
+    } elseif ($name -match "i\d-(\d{4,5})") {
+        $model = $Matches[1]
+        if ($model.Length -eq 4) { $generation = [int]$model.Substring(0, 1) } else { $generation = [int]$model.Substring(0, 2) }
+        $yearMap = @{ 15 = 2025; 14 = 2023; 13 = 2022; 12 = 2021; 11 = 2020; 10 = 2019; 9 = 2018; 8 = 2017 }
+        if ($yearMap.ContainsKey($generation)) { $year = $yearMap[$generation] }
+    } elseif ($name -match "Ryzen\s+\d\s+(\d{4})") {
+        $generation = [int]$Matches[1].Substring(0, 1)
+        $amdYears = @{ 7 = 2022; 5 = 2020; 3 = 2019 }
+        if ($amdYears.ContainsKey($generation)) { $year = $amdYears[$generation] }
+    }
+    [pscustomobject]@{
+        Name = $name
+        Cores = [int]$cpu.NumberOfCores
+        Logical = [int]$cpu.NumberOfLogicalProcessors
+        Generation = $generation
+        LaunchYear = $year
+    }
+}
+
+function Get-MemoryInfo {
+    $os = Get-CimInstance Win32_OperatingSystem
+    $total = [double]$os.TotalVisibleMemorySize * 1KB
+    $free = [double]$os.FreePhysicalMemory * 1KB
+    $usedPct = if ($total -gt 0) { [math]::Round((($total - $free) / $total) * 100, 1) } else { 0 }
+    [pscustomobject]@{
+        TotalGb = [math]::Round($total / 1GB, 1)
+        AvailableGb = [math]::Round($free / 1GB, 1)
+        Percent = $usedPct
+    }
+}
+
+function Get-DiskInfo {
+    Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+        $total = [double]$_.Size
+        $free = [double]$_.FreeSpace
+        [pscustomobject]@{
+            Mount = $_.DeviceID
+            TotalGb = [math]::Round($total / 1GB, 1)
+            FreeGb = [math]::Round($free / 1GB, 1)
+            Percent = if ($total -gt 0) { [math]::Round((($total - $free) / $total) * 100, 1) } else { 0 }
+            FileSystem = $_.FileSystem
+        }
+    }
+}
+
+function Get-UptimeInfo {
+    $os = Get-CimInstance Win32_OperatingSystem
+    $boot = [datetime]$os.LastBootUpTime
+    $delta = New-TimeSpan -Start $boot -End (Get-Date)
+    [pscustomobject]@{
+        BootTime = $boot
+        Days = [int]$delta.TotalDays
+        Hours = $delta.Hours
+        Text = "$([int]$delta.TotalDays)d $($delta.Hours)u"
+    }
+}
+
+function Get-SystemModel {
+    $cs = Get-CimInstance Win32_ComputerSystem
+    return "$($cs.Manufacturer) $($cs.Model)".Trim()
+}
+
+function Get-ProcessInfo {
+    param([string]$Pattern)
+    Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $Pattern } | ForEach-Object {
+        [pscustomobject]@{
+            Name = $_.ProcessName
+            Pid = $_.Id
+            MemoryMb = [math]::Round($_.WorkingSet64 / 1MB, 2)
+        }
+    }
+}
+
+function Get-FastBoot {
+    $val = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" "HiberbootEnabled" $null
+    if ($null -eq $val) { return $null }
+    return ([int]$val -eq 1)
+}
+
+function Get-RebootPending {
+    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { return $true }
+    $uptime = Get-UptimeInfo
+    return ($uptime.Days -gt 2)
+}
+
+function Get-ProxyEnabled {
+    $val = Get-RegValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" "ProxyEnable" $null
+    if ($null -eq $val) { return $null }
+    return ([int]$val -eq 1)
+}
+
+function Get-WebView2Info {
+    $roots = @(
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients",
+        "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients"
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        foreach ($child in Get-ChildItem $root -ErrorAction SilentlyContinue) {
+            $item = Get-ItemProperty $child.PSPath -ErrorAction SilentlyContinue
+            if ($item.name -and $item.name -match "WebView") {
+                return [pscustomobject]@{ Installed = $true; Version = $item.pv }
+            }
+        }
+    }
+    [pscustomobject]@{ Installed = $false; Version = "" }
+}
+
+function Get-DotNetVersion {
+    $release = Get-RegValue "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" "Release" $null
+    if ($null -eq $release) { return "" }
+    $mapping = [ordered]@{
+        533320 = "4.8.1"; 528040 = "4.8"; 461808 = "4.7.2"; 461308 = "4.7.1";
+        460798 = "4.7"; 394802 = "4.6.2"; 394254 = "4.6.1"; 393295 = "4.6";
+        379893 = "4.5.2"; 378675 = "4.5.1"; 378389 = "4.5"
+    }
+    foreach ($key in $mapping.Keys) {
+        if ([int]$release -ge [int]$key) { return "$($mapping[$key]) (Release $release)" }
+    }
+    return "Onbekend (Release $release)"
+}
+
+function Get-SmartAppControl {
+    try {
+        $state = (Get-MpComputerStatus -ErrorAction Stop).SmartAppControlState
+        if ($state) { return [pscustomobject]@{ State = [string]$state } }
+    } catch {}
+    $val = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy" "VerifiedAndReputablePolicyState" $null
+    $map = @{ 0 = "Off"; 1 = "On"; 2 = "Evaluation" }
+    if ($null -ne $val -and $map.ContainsKey([int]$val)) { return [pscustomobject]@{ State = $map[[int]$val] } }
+    [pscustomobject]@{ State = "Niet beschikbaar" }
+}
+
+function Get-LastWindowsUpdate {
+    try {
+        $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+        $history = $searcher.QueryHistory(0, 1)
+        if ($history.Count -gt 0) { return $history[0].Date }
+    } catch {}
+    return $null
+}
+
+function Get-WindowsKbUpdates {
+    $rows = New-Object System.Collections.Generic.List[object]
+    try {
+        Get-HotFix -ErrorAction Stop | ForEach-Object {
+            [void]$rows.Add([pscustomobject]@{
+                Kb = ([string]$_.HotFixID).ToUpper()
+                Title = $_.Description
+                InstalledOn = if ($_.InstalledOn) { ([datetime]$_.InstalledOn).ToString("yyyy-MM-dd") } else { "" }
+                Source = "Get-HotFix"
+            })
+        }
+    } catch {}
+    try {
+        $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+        foreach ($item in $searcher.QueryHistory(0, 80)) {
+            if ($item.Title -match "(KB\d+)") {
+                [void]$rows.Add([pscustomobject]@{
+                    Kb = $Matches[1].ToUpper()
+                    Title = $item.Title
+                    InstalledOn = if ($item.Date) { ([datetime]$item.Date).ToString("yyyy-MM-dd") } else { "" }
+                    Source = "Update History"
+                })
+            }
+        }
+    } catch {}
+    $rows | Group-Object Kb | ForEach-Object {
+        $_.Group | Sort-Object InstalledOn -Descending | Select-Object -First 1
+    } | Sort-Object InstalledOn -Descending
+}
+
+function Get-AntivirusProducts {
+    Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty displayName
+}
+
+function Get-NetworkAdapters {
+    $configs = Get-NetIPConfiguration -ErrorAction Stop
+    $defaultInterface = ($configs | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).InterfaceAlias
+    foreach ($cfg in $configs) {
+        $ip = $cfg.IPv4Address | Select-Object -First 1
+        if (-not $ip -or $ip.IPAddress -like "127.*") { continue }
+        $adapter = Get-NetAdapter -InterfaceIndex $cfg.InterfaceIndex -ErrorAction SilentlyContinue
+        if ($adapter -and $adapter.Status -ne "Up") { continue }
+        [pscustomobject]@{
+            Name = $cfg.InterfaceAlias
+            Ip = $ip.IPAddress
+            SpeedMbps = if ($adapter -and $adapter.LinkSpeed -match "(\d+)\s*Gbps") { [int]$Matches[1] * 1000 } elseif ($adapter -and $adapter.LinkSpeed -match "(\d+)\s*Mbps") { [int]$Matches[1] } else { 0 }
+            IsDefault = ($cfg.InterfaceAlias -eq $defaultInterface)
+            IsWifi = ($cfg.InterfaceAlias -match 'wi-?fi|wireless|wlan' -or ($adapter -and $adapter.InterfaceDescription -match 'wireless|wifi|wlan|802\.11'))
+        }
+    }
+}
+
+function Get-GatewayIp {
+    $cfg = Get-NetIPConfiguration -ErrorAction Stop | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
+    if ($cfg -and $cfg.IPv4DefaultGateway) { return $cfg.IPv4DefaultGateway.NextHop }
+    return ""
+}
+
+function Get-DnsServers {
+    $servers = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop |
+        Select-Object -ExpandProperty ServerAddresses |
+        Where-Object { $_ -and $_ -notlike "127.*" } |
+        Select-Object -Unique
+    return ($servers -join ", ")
+}
+
+function Get-WanInfo {
+    try {
+        $d = Invoke-RestMethod -Uri "http://ip-api.com/json/?fields=query,isp,as" -TimeoutSec 5 -ErrorAction Stop
+        return [pscustomobject]@{ Ip = $d.query; Isp = $d.isp; As = $d.as }
+    } catch {
+        return [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" }
+    }
+}
+
+function Test-DnsEndpoint {
+    param([string]$Endpoint)
+    $hostName = Get-HostFromEndpoint $Endpoint
+    try {
+        [void](Resolve-DnsName -Name $hostName -Type A -ErrorAction Stop)
+        return "Succesvol"
+    } catch {
+        return "Mislukt"
+    }
+}
+
+function Test-TcpEndpoint {
+    param(
+        [string]$Endpoint,
+        [int]$Port = 443
+    )
+    $hostName = Get-HostFromEndpoint $Endpoint
+    $client = [System.Net.Sockets.TcpClient]::new()
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $task = $client.ConnectAsync($hostName, $Port)
+        if (-not $task.Wait(5000)) { return @{ Open = $false; Latency = -1; Label = "Geblokkeerd" } }
+        $sw.Stop()
+        return @{ Open = $true; Latency = [math]::Round($sw.Elapsed.TotalMilliseconds); Label = "Open" }
+    } catch {
+        return @{ Open = $false; Latency = -1; Label = "Onbereikbaar" }
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Test-SslEndpoint {
+    param([string]$Endpoint)
+    $hostName = Get-HostFromEndpoint $Endpoint
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $client.Connect($hostName, 443)
+        $stream = [System.Net.Security.SslStream]::new($client.GetStream(), $false, ({ $true } -as [System.Net.Security.RemoteCertificateValidationCallback]))
+        $stream.AuthenticateAsClient($hostName)
+        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($stream.RemoteCertificate)
+        $issuer = $cert.Issuer
+        $org = if ($issuer -match "O=([^,]+)") { $Matches[1] } else { $issuer }
+        return [pscustomobject]@{ Issuer = $org; Tls = $stream.SslProtocol.ToString() }
+    } catch {
+        return [pscustomobject]@{ Issuer = "Fout: $($_.Exception.Message)"; Tls = "Mislukt" }
+    } finally {
+        if ($stream) { $stream.Dispose() }
+        $client.Dispose()
+    }
+}
+
+function Test-HttpEndpoint {
+    param([string]$Endpoint)
+    $url = if ($Endpoint -match "^https?://") { $Endpoint } else { "https://$Endpoint" }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $sw.Stop()
+        return [pscustomobject]@{ Status = "OK ($($r.StatusCode))"; Code = $r.StatusCode; TimeMs = [math]::Round($sw.Elapsed.TotalMilliseconds) }
+    } catch {
+        $sw.Stop()
+        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+            $code = [int]$_.Exception.Response.StatusCode
+            return [pscustomobject]@{ Status = "OK ($code)"; Code = $code; TimeMs = [math]::Round($sw.Elapsed.TotalMilliseconds) }
+        }
+        return [pscustomobject]@{ Status = "Mislukt"; Code = 0; TimeMs = -1 }
+    }
+}
+
+function Test-DomainSet {
+    param(
+        [string[]]$DomainsExtensive = $Script:DomainsExtensive,
+        [string[]]$DomainsBasic = $Script:DomainsBasic,
+        [string[]]$TrustedIssuers = $Script:TrustedIssuers
+    )
+    $all = @()
+    foreach ($d in $DomainsExtensive) { $all += [pscustomobject]@{ Domain = $d; Extensive = $true } }
+    foreach ($d in $DomainsBasic) { $all += [pscustomobject]@{ Domain = $d; Extensive = $false } }
+
+    $worker = {
+        param($Entry, $TrustedIssuerText)
+        $TrustedIssuers = @($TrustedIssuerText -split "\|")
+
+        function Get-HostFromEndpointLocal {
+            param([string]$Endpoint)
+            return (($Endpoint -split "/")[0]).Trim()
+        }
+
+        function Test-DnsEndpointLocal {
+            param([string]$Endpoint)
+            $hostName = Get-HostFromEndpointLocal $Endpoint
+            try {
+                [void](Resolve-DnsName -Name $hostName -Type A -ErrorAction Stop)
+                return "Succesvol"
+            } catch {
+                return "Mislukt"
+            }
+        }
+
+        function Test-TcpEndpointLocal {
+            param([string]$Endpoint)
+            $hostName = Get-HostFromEndpointLocal $Endpoint
+            $client = [System.Net.Sockets.TcpClient]::new()
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                $task = $client.ConnectAsync($hostName, 443)
+                if (-not $task.Wait(5000)) {
+                    return [pscustomobject]@{ Open = $false; Latency = -1; Label = "Geblokkeerd" }
+                }
+                $sw.Stop()
+                return [pscustomobject]@{ Open = $true; Latency = [math]::Round($sw.Elapsed.TotalMilliseconds); Label = "Open" }
+            } catch {
+                return [pscustomobject]@{ Open = $false; Latency = -1; Label = "Onbereikbaar" }
+            } finally {
+                $client.Dispose()
+            }
+        }
+
+        function Test-SslEndpointLocal {
+            param([string]$Endpoint)
+            $hostName = Get-HostFromEndpointLocal $Endpoint
+            $client = [System.Net.Sockets.TcpClient]::new()
+            $stream = $null
+            try {
+                $connectTask = $client.ConnectAsync($hostName, 443)
+                if (-not $connectTask.Wait(5000)) {
+                    return [pscustomobject]@{ Issuer = "Fout: timeout"; Tls = "Mislukt" }
+                }
+                $stream = [System.Net.Security.SslStream]::new($client.GetStream(), $false, ({ $true } -as [System.Net.Security.RemoteCertificateValidationCallback]))
+                $stream.AuthenticateAsClient($hostName)
+                $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($stream.RemoteCertificate)
+                $issuer = $cert.Issuer
+                $org = if ($issuer -match "O=([^,]+)") { $Matches[1] } else { $issuer }
+                return [pscustomobject]@{ Issuer = $org; Tls = $stream.SslProtocol.ToString() }
+            } catch {
+                return [pscustomobject]@{ Issuer = "Fout: $($_.Exception.Message)"; Tls = "Mislukt" }
+            } finally {
+                if ($stream) { $stream.Dispose() }
+                $client.Dispose()
+            }
+        }
+
+        function Test-HttpEndpointLocal {
+            param([string]$Endpoint)
+            $url = if ($Endpoint -match "^https?://") { $Endpoint } else { "https://$Endpoint" }
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                $sw.Stop()
+                return [pscustomobject]@{ Status = "OK ($($r.StatusCode))"; Code = $r.StatusCode; TimeMs = [math]::Round($sw.Elapsed.TotalMilliseconds) }
+            } catch {
+                $sw.Stop()
+                if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                    $code = [int]$_.Exception.Response.StatusCode
+                    return [pscustomobject]@{ Status = "OK ($code)"; Code = $code; TimeMs = [math]::Round($sw.Elapsed.TotalMilliseconds) }
+                }
+                return [pscustomobject]@{ Status = "Mislukt"; Code = 0; TimeMs = -1 }
+            }
+        }
+
+        $tcp = Test-TcpEndpointLocal $Entry.Domain
+        $ssl = Test-SslEndpointLocal $Entry.Domain
+        $issuer = $ssl.Issuer
+        $sslStatus = "Niet vertrouwd"
+        if ($issuer -like "Fout:*") {
+            $sslStatus = "FOUT"
+        } else {
+            foreach ($trusted in $TrustedIssuers) {
+                if ($issuer -like "*$trusted*") { $sslStatus = "OK"; break }
+            }
+        }
+        $http = if ($Entry.Extensive -and $tcp.Open) {
+            Test-HttpEndpointLocal $Entry.Domain
+        } else {
+            [pscustomobject]@{ Status = ""; Code = 0; TimeMs = -1 }
+        }
+
+        [pscustomobject]@{
+            Domain = [string]$Entry.Domain
+            Extensive = [bool]$Entry.Extensive
+            Dns = [string](Test-DnsEndpointLocal $Entry.Domain)
+            Port443 = [string]$tcp.Label
+            TcpLatencyMs = [int]$tcp.Latency
+            TcpLatency = if ($tcp.Latency -ge 0) { "$($tcp.Latency)ms" } else { "timeout" }
+            SslIssuer = [string]$issuer
+            SslStatus = [string]$sslStatus
+            Tls12 = if ($ssl.Tls -match "Tls12|Tls13") { "OK" } else { [string]$ssl.Tls }
+            Http = [string]$http.Status
+            HttpTimeMs = [int]$http.TimeMs
+            HttpTime = if ($http.TimeMs -ge 0) { "$($http.TimeMs)ms" } else { "-" }
+        }
+    }
+
+    $jobs = @()
+    try {
+        foreach ($entry in $all) {
+            $jobs += Start-Job -ScriptBlock $worker -ArgumentList $entry, ($TrustedIssuers -join "|")
+        }
+
+        Wait-Job -Job $jobs -Timeout 35 | Out-Null
+        $results = @($jobs | Receive-Job -ErrorAction SilentlyContinue)
+    } finally {
+        $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+
+    $order = @{}
+    for ($i = 0; $i -lt $all.Count; $i++) { $order[$all[$i].Domain] = $i }
+    $normalizedResults = @($results | Where-Object { $_ -and $_.Domain } | Sort-Object { $order[$_.Domain] })
+
+    [pscustomobject]@{
+        Extensive = @($normalizedResults | Where-Object { $_.Extensive })
+        Basic = @($normalizedResults | Where-Object { -not $_.Extensive })
+        Failures = @($normalizedResults | Where-Object { $_.SslStatus -eq "FOUT" -or $_.Dns -eq "Mislukt" })
+    }
+}
+
+function Get-InstalledApps {
+    $paths = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($path in $paths) {
+        Get-ItemProperty $path -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.DisplayName -and $_.SystemComponent -ne 1 -and
+                $_.DisplayName -notmatch "^(KB\d+|Update for|Cumulatieve update|Servicing Stack|Dynamic Update for)"
+            } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Name = $_.DisplayName
+                    Version = $_.DisplayVersion
+                    Publisher = $_.Publisher
+                    InstallDate = $_.InstallDate
+                }
+            }
+    }
+}
+
+function Split-InstalledApps {
+    param([object[]]$Apps)
+    $updatePatterns = @(
+        "update voor", "Update for", "Security Update", "beveiligingsinformatie",
+        "antimalwareplatform", "\(KB\d+\)", "^KB\d+:", "Microsoft.VCLibs",
+        "Microsoft.NET.Native", "Microsoft.Windows", "Update for Microsoft",
+        "Cumulatieve update", "Dynamic Update for", "Servicing Stack"
+    )
+    $software = @()
+    $updates = @()
+    foreach ($app in $Apps) {
+        $isUpdate = $false
+        foreach ($pattern in $updatePatterns) {
+            if ($app.Name -match $pattern) { $isUpdate = $true; break }
+        }
+        if ($app.Name -like "{*") { $isUpdate = $true }
+        if ($isUpdate) { $updates += $app } else { $software += $app }
+    }
+    [pscustomobject]@{
+        Software = @($software | Sort-Object Name)
+        Updates = @($updates | Sort-Object Name)
+    }
+}
+
+function Get-AppChecks {
+    param([object[]]$Apps)
+    $checks = New-Object System.Collections.Generic.List[object]
+
+    $officeWarnings = @()
+    foreach ($app in $Apps) {
+        if ($app.Name -match "Microsoft Office (Professional|Standard|Home|Small Business)\s*(20\d{2})" -and [int]$Matches[2] -lt 2021) {
+            $officeWarnings += "Office $($Matches[2])"
+        }
+        if ($app.Name -match "Microsoft (Word|Excel|Outlook|PowerPoint|Access|Publisher)" -and $app.Version -match "(20\d{2})" -and [int]$Matches[1] -lt 2021) {
+            $officeWarnings += "$($Matches[1])"
+        }
+        if ($app.Name -match "Microsoft 365 Apps" -and $app.Version -match "(20\d{2})" -and [int]$Matches[1] -lt 2021) {
+            $officeWarnings += "Microsoft 365 Apps (verouderd)"
+        }
+    }
+    if ($officeWarnings) {
+        [void]$checks.Add([pscustomobject]@{ Category = "Office"; Status = "warn"; Message = (($officeWarnings | Select-Object -Unique) -join "; ") + " - upgrade naar Office 2021 of Microsoft 365" })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Office"; Status = "ok"; Message = "Office is up-to-date" })
+    }
+
+    $consumerAvPatterns = @("mcafee", "norton", "avast", "avg", "avira", "kaspersky", "panda dome", "webroot secureanywhere", "totalav", "f-secure safe")
+    $businessMarkers = @("microsoft defender", "crowdstrike falcon", "endpoint", "business", "gravityzone", "intercept x", "enterprise", "corporate", "for business")
+    $consumerFound = @()
+    foreach ($app in $Apps) {
+        $low = ([string]$app.Name).ToLowerInvariant()
+        if ($businessMarkers | Where-Object { $low.Contains($_) }) { continue }
+        if (($consumerAvPatterns | Where-Object { $low.Contains($_) }) -or $low -match "bitdefender.*\b(total|internet|antivirus)\b|malwarebytes.*\bpremium\b|trend micro.*\b(maximum|internet security)\b") {
+            $consumerFound += $app.Name
+        }
+    }
+    if ($consumerFound) {
+        [void]$checks.Add([pscustomobject]@{ Category = "Consumenten virusscanner"; Status = "warn"; Message = "$($consumerFound[0]) gedetecteerd - kan Exquise, netwerkverkeer of performance beinvloeden" })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Consumenten virusscanner"; Status = "ok"; Message = "Niet gedetecteerd" })
+    }
+
+    $javaWarnings = @()
+    foreach ($app in $Apps) {
+        if ($app.Name -match "java" -and ([string]$app.Version).Trim() -match "^(1\.|8\.|7\.|6\.)") {
+            $javaWarnings += "$($app.Name) ($($app.Version))"
+        }
+    }
+    if ($javaWarnings) {
+        [void]$checks.Add([pscustomobject]@{ Category = "Java"; Status = "warn"; Message = ($javaWarnings -join "; ") + " - upgrade naar Java 11 of nieuwer" })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Java"; Status = "ok"; Message = "Niet gedetecteerd of up-to-date" })
+    }
+
+    $ace = @()
+    foreach ($app in $Apps) {
+        if ($app.Name -match "access" -and $app.Name -match "engine" -and $app.Version -match "(20\d{2})" -and [int]$Matches[1] -le 2016) {
+            $ace += "$($app.Name) ($($app.Version))"
+        }
+    }
+    $aceRegistry = Test-Path "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Registry\Machine\Software\Wow6432Node\Microsoft\Office\16.0\Access Connectivity Engine\Engines"
+    if ($ace -or $aceRegistry) {
+        $msg = @()
+        if ($ace) { $msg += (($ace -join "; ") + " (EOL, <= 2016)") }
+        if ($aceRegistry) { $msg += "Click-to-Run registry key aanwezig" }
+        [void]$checks.Add([pscustomobject]@{ Category = "Access Database Engine"; Status = "warn"; Message = ($msg -join " | ") })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Access Database Engine"; Status = "ok"; Message = "Niet gedetecteerd" })
+    }
+
+    $fp = @()
+    foreach ($app in $Apps) {
+        if ($app.Name -match "florida probe|fp32") {
+            $detail = $app.Name
+            if ($app.Version) { $detail += " v$($app.Version)" }
+            if ($app.InstallDate) { $detail += " ($($app.InstallDate))" }
+            $fp += $detail
+        }
+    }
+    if ($fp) {
+        [void]$checks.Add([pscustomobject]@{ Category = "Florida Probe"; Status = "warn"; Message = ($fp -join "; ") })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Florida Probe"; Status = "ok"; Message = "Niet gedetecteerd" })
+    }
+
+    $polyStudio = @()
+    foreach ($app in $Apps) {
+        $name = [string]$app.Name
+        if ($name -match "^HP\s+Poly\s+Studio\s+App$" -or $name -match "^HP\s+Poly\s+Studio\s+Desktop\s+App$") {
+            $polyStudio += if ($app.Version) { "$name ($($app.Version))" } else { $name }
+        }
+    }
+    if ($polyStudio) {
+        [void]$checks.Add([pscustomobject]@{ Category = "Poly Studio app"; Status = "warn"; Message = ($polyStudio | Select-Object -Unique) -join "; " })
+    } else {
+        [void]$checks.Add([pscustomobject]@{ Category = "Poly Studio app"; Status = "ok"; Message = "Niet gedetecteerd" })
+    }
+
+    return $checks
+}
+
+function Get-WindowsInstallDate {
+    param([object[]]$Apps)
+    $installDate = Get-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" "InstallDate" $null
+    if ($installDate) {
+        return [pscustomobject]@{ Date = ([DateTimeOffset]::FromUnixTimeSeconds([int64]$installDate).DateTime).ToString("yyyy-MM-dd"); Source = "Windows InstallDate" }
+    }
+    $profile = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notin @("Public", "Default", "Default User", "All Users") } |
+        Sort-Object CreationTime |
+        Select-Object -First 1
+    if ($profile) { return [pscustomobject]@{ Date = $profile.CreationTime.ToString("yyyy-MM-dd"); Source = "eerste gebruikersprofiel" } }
+    $candidate = $Apps | Where-Object { $_.InstallDate -match "^\d{8}$" } | Sort-Object InstallDate | Select-Object -First 1
+    if ($candidate) {
+        $s = [string]$candidate.InstallDate
+        return [pscustomobject]@{ Date = "$($s.Substring(0,4))-$($s.Substring(4,2))-$($s.Substring(6,2))"; Source = "oudste app-installatie" }
+    }
+    [pscustomobject]@{ Date = ""; Source = "onbekend" }
+}
+
+function Get-EventLogRows {
+    $start = (Get-Date).AddDays(-7)
+    Get-WinEvent -FilterHashtable @{ LogName = @("Application", "System"); StartTime = $start; Level = 1, 2 } -ErrorAction SilentlyContinue |
+        Select-Object -First 250 |
+        ForEach-Object {
+            $msg = [string]$_.Message
+            if ($msg.Length -gt 500) { $msg = $msg.Substring(0, 500) }
+            [pscustomobject]@{
+                TimeStr = $_.TimeCreated.ToString("dd-MM-yyyy HH:mm")
+                Id = $_.Id
+                Level = $_.LevelDisplayName
+                Provider = $_.ProviderName
+                Message = $msg
+            }
+        }
+}
+
+function Get-ExquiseLogs {
+    $cutoff = (Get-Date).AddDays(-7)
+    $maxSize = 5MB
+    $sources = New-Object System.Collections.Generic.List[object]
+
+    function Add-LogFiles {
+        param(
+            [string]$SourceName,
+            [string]$Path,
+            [string]$Filter,
+            [switch]$Recurse
+        )
+        if ([string]::IsNullOrWhiteSpace($Path)) { return }
+        $files = Get-ChildItem -Path $Path -Filter $Filter -File -Recurse:$Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.LastWriteTime -ge $cutoff -and $_.Length -le $maxSize
+            }
+        foreach ($file in $files) {
+            $content = ""
+            try { $content = Get-Content -Path $file.FullName -Raw -Encoding UTF8 -ErrorAction Stop } catch { $content = "[Kon logbestand niet lezen: $($_.Exception.Message)]" }
+            [void]$sources.Add([pscustomobject]@{
+                Source = $SourceName
+                FileName = $file.Name
+                Modified = $file.LastWriteTime
+                Path = $file.FullName
+                Content = $content
+            })
+        }
+    }
+
+    if ($env:LOCALAPPDATA) {
+        Add-LogFiles "Exquise ClickOnce" (Join-Path $env:LOCALAPPDATA "Apps\2.0") "FEExquise*.log" -Recurse
+        Add-LogFiles "IAS log" (Join-Path $env:LOCALAPPDATA "Apps\2.0") "ias.log" -Recurse
+        $msixPackages = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Packages\Vertimart.Exquise_*") -Directory -ErrorAction SilentlyContinue
+        foreach ($package in $msixPackages) {
+            Add-LogFiles "Exquise MSIX" (Join-Path $package.FullName "LocalCache\Local\Vertimart\Exquise\logs") "FEExquise*.log"
+        }
+    }
+    if ($env:APPDATA) {
+        $repair = Join-Path $env:APPDATA "Exquise\Exquise RepairTool\Logs\RepairToolLog.txt"
+        if (Test-Path $repair) {
+            $file = Get-Item $repair
+            if ($file.LastWriteTime -ge $cutoff -and $file.Length -le $maxSize) {
+                $content = Get-Content -Path $file.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+                [void]$sources.Add([pscustomobject]@{
+                    Source = "RepairToolLog"
+                    FileName = $file.Name
+                    Modified = $file.LastWriteTime
+                    Path = $file.FullName
+                    Content = $content
+                })
+            }
+        }
+    }
+    return $sources
+}
+
+function Get-LanScan {
+    param(
+        [string[]]$SonosOuis = $Script:SonosOuis,
+        [string[]]$YealinkOuis = $Script:YealinkOuis
+    )
+    $default = [pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() }
+    $ipConfig = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address } | Select-Object -First 1
+    if (-not $ipConfig) { return $default }
+    $ip = ($ipConfig.IPv4Address | Select-Object -First 1).IPAddress
+    $parts = $ip.Split(".")
+    if ($parts.Count -lt 4) { return $default }
+    $networkBase = ($parts[0..2] -join ".")
+
+    $pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 120)
+    $pool.Open()
+    $jobs = @()
+    $scriptBlock = {
+        param($Address)
+        try {
+            $ping = [System.Net.NetworkInformation.Ping]::new()
+            $reply = $ping.Send($Address, 750)
+            if ($reply.Status -eq "Success") { return "$Address|$($reply.RoundtripTime)" }
+        } catch {}
+        return $null
+    }
+    try {
+        foreach ($i in 1..254) {
+            $ps = [powershell]::Create().AddScript($scriptBlock).AddArgument("$networkBase.$i")
+            $ps.RunspacePool = $pool
+            $jobs += [pscustomobject]@{ Pipe = $ps; Result = $ps.BeginInvoke() }
+        }
+        while (($jobs | Where-Object { -not $_.Result.IsCompleted }).Count -gt 0) {
+            Start-Sleep -Milliseconds 100
+        }
+        $found = foreach ($job in $jobs) {
+            $r = $job.Pipe.EndInvoke($job.Result)
+            $job.Pipe.Dispose()
+            if ($r) { $r }
+        }
+    } finally {
+        $pool.Close()
+        $pool.Dispose()
+    }
+
+    $neighbors = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    $devices = foreach ($entry in $found) {
+        $p = $entry -split "\|"
+        $address = $p[0]
+        $latency = if ($p.Count -gt 1) { $p[1] } else { "" }
+        $neighbor = $neighbors | Where-Object { $_.IPAddress -eq $address -and $_.State -ne "Incomplete" } | Select-Object -First 1
+        $mac = if ($neighbor) { $neighbor.LinkLayerAddress.ToUpper().Replace("-", ":") } else { "Niet gevonden" }
+        $marker = ""
+        if ($mac -ne "Niet gevonden" -and $mac.Length -ge 8) {
+            $oui = $mac.Substring(0, 8)
+            if ($SonosOuis -contains $oui) {
+                $marker = "*"
+            }
+            elseif ($YealinkOuis -contains $oui) {
+                $marker = "^"
+            }
+        }
+        $hostName = ""
+        try {
+            $async = [System.Net.Dns]::BeginGetHostEntry($address, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne(120)) {
+                $dns = [System.Net.Dns]::EndGetHostEntry($async)
+                if ($dns -and $dns.HostName) { $hostName = $dns.HostName }
+            }
+            $async.AsyncWaitHandle.Close()
+        } catch {}
+        [pscustomobject]@{
+            Marker = $marker
+            Ip = $address
+            Mac = $mac
+            HostName = $hostName
+            LatencyMs = $latency
+        }
+    }
+    $ordered = @($devices | Sort-Object { [version]$_.Ip })
+
+    $sonos = @($ordered | Where-Object { $_.Marker -eq "*" })
+    $yealink = @($ordered | Where-Object { $_.Marker -eq "^" })
+    [pscustomobject]@{
+        Subnet = $networkBase
+        Total = $ordered.Count
+        SonosCount = $sonos.Count
+        SonosFound = $sonos.Count -gt 0
+        YealinkCount = $yealink.Count
+        YealinkFound = $yealink.Count -gt 0
+        Devices = $ordered
+    }
+}
+
+function Copy-FileToClipboard {
+    param([string]$Path)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $collection = [System.Collections.Specialized.StringCollection]::new()
+        [void]$collection.Add((Resolve-Path $Path).Path)
+        $data = [System.Windows.Forms.DataObject]::new()
+        $data.SetFileDropList($collection)
+        $data.SetText((Resolve-Path $Path).Path)
+        for ($i = 0; $i -lt 5; $i++) {
+            try {
+                [System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
+                return $true
+            } catch {
+                Start-Sleep -Milliseconds 250
+            }
+        }
+    } catch {}
+    return $false
+}
+
+function RowsFromObjects {
+    param(
+        [object[]]$Items,
+        [string[]]$Columns
+    )
+    if (-not $Items -or $Items.Count -eq 0) {
+        return "<tr><td colspan='$($Columns.Count)' class='muted'>Geen gegevens gevonden</td></tr>"
+    }
+    $html = New-Object System.Text.StringBuilder
+    foreach ($item in $Items) {
+        [void]$html.Append("<tr>")
+        foreach ($col in $Columns) {
+            [void]$html.Append("<td>$(HtmlEncode $item.$col)</td>")
+        }
+        [void]$html.Append("</tr>")
+    }
+    return $html.ToString()
+}
+
+function ProcessRows {
+    param([object[]]$Items)
+    if (-not $Items -or $Items.Count -eq 0) { return "<tr><td colspan='3' class='muted'>Geen processen actief</td></tr>" }
+    (($Items | ForEach-Object { "<tr><td>$(HtmlEncode $_.Name)</td><td>$(HtmlEncode $_.Pid)</td><td>$(HtmlEncode $_.MemoryMb) MB</td></tr>" }) -join "")
+}
+
+function EventLogText {
+    param([object[]]$Events)
+    if (-not $Events -or $Events.Count -eq 0) { return "Geen Error/Critical events gevonden in de laatste 7 dagen." }
+    return (($Events | ForEach-Object { "[$($_.TimeStr)] $($_.Level) $($_.Provider) ($($_.Id))`n$($_.Message)" }) -join "`n`n")
+}
+
+function ExquiseLogText {
+    param([object[]]$Logs)
+    if (-not $Logs -or $Logs.Count -eq 0) { return "Geen Exquise logs gevonden binnen 7 dagen." }
+    return (($Logs | ForEach-Object { "===== $($_.Source) / $($_.FileName) / $($_.Modified) =====`n$($_.Content)" }) -join "`n`n")
+}
+
+function ExquiseLogCardsHtml {
+    param([object[]]$Logs)
+    if (-not $Logs -or $Logs.Count -eq 0) {
+        return @"
+  <section class="card full log-card">
+    <div class="title">Exquise logs</div>
+    <div class="muted">Geen Exquise logs gevonden binnen 7 dagen.</div>
+  </section>
+"@
+    }
+
+    $sourceOrder = @("Exquise ClickOnce", "Exquise MSIX", "IAS log", "RepairToolLog")
+    $sources = @()
+    foreach ($name in $sourceOrder) {
+        if ($Logs | Where-Object { $_.Source -eq $name }) { $sources += $name }
+    }
+    foreach ($name in ($Logs | Select-Object -ExpandProperty Source -Unique)) {
+        if ($sources -notcontains $name) { $sources += $name }
+    }
+
+    $cards = New-Object System.Text.StringBuilder
+    $index = 0
+    foreach ($source in $sources) {
+        $items = @($Logs | Where-Object { $_.Source -eq $source } | Sort-Object Modified -Descending)
+        if (-not $items.Count) { continue }
+        $preId = "exqlogs$index"
+        $inputId = "exqlogsSearch$index"
+        $combined = (($items | ForEach-Object {
+            "===== $($_.FileName) / $($_.Modified) =====`n$($_.Content)"
+        }) -join "`n`n")
+        $escaped = HtmlEncode $combined
+        [void]$cards.AppendLine(@"
+  <section class="card full log-card">
+    <div class="title-row">
+      <div>
+        <div class="title">$(HtmlEncode $source)</div>
+        <div class="section-meta">$($items.Count) bestand(en)</div>
+      </div>
+      <button onclick="toggleLog('$preId',this)">Vergroot log</button>
+    </div>
+    <div class="toolbar">
+      <input id="$inputId" type="text" value="excpt" oninput="highlightLog('$preId','$inputId')" onkeydown="handleSearchKey(event,'$preId')" placeholder="Zoekterm in $(AttrEncode $source)">
+      <button onclick="searchOrNextLog('$preId','$inputId')">Zoeken</button>
+      <button onclick="jumpMatch('$preId',-1)">Vorige</button>
+      <button onclick="jumpMatch('$preId',1)">Volgende</button>
+      <button onclick="copyLog('$preId')">Kopieer log</button>
+    </div>
+    <pre id="$preId">$escaped</pre>
+  </section>
+"@)
+        $index++
+    }
+    return $cards.ToString()
+}
+
+function Write-TestJobHtmlReport {
+    param(
+        [object]$Data,
+        [string]$Path
+    )
+
+    $appRows = if ($Data.AppChecks.Count) {
+        (($Data.AppChecks | ForEach-Object {
+            $cls = if ($_.Status -eq "warn") { "warn" } else { "ok" }
+            "<tr><td>$(HtmlEncode $_.Category)</td><td>$(New-Status $_.Status $cls)</td><td>$(HtmlEncode $_.Message)</td></tr>"
+        }) -join "")
+    } else {
+        "<tr><td colspan='3' class='muted'>Geen softwarechecks beschikbaar</td></tr>"
+    }
+    $appChecksLeft = @()
+    $appChecksRight = @()
+    if ($Data.AppChecks.Count) {
+        for ($i = 0; $i -lt $Data.AppChecks.Count; $i++) {
+            if ($i -lt [math]::Ceiling($Data.AppChecks.Count / 2)) {
+                $appChecksLeft += $Data.AppChecks[$i]
+            } else {
+                $appChecksRight += $Data.AppChecks[$i]
+            }
+        }
+    }
+    $appRowsLeft = if ($appChecksLeft.Count) {
+        (($appChecksLeft | ForEach-Object {
+            $cls = if ($_.Status -eq "warn") { "warn" } else { "ok" }
+            "<tr><td>$(HtmlEncode $_.Category)</td><td>$(New-Status $_.Status $cls)</td><td>$(HtmlEncode $_.Message)</td></tr>"
+        }) -join "")
+    } else {
+        "<tr><td colspan='3' class='muted'>Geen softwarechecks beschikbaar</td></tr>"
+    }
+    $appRowsRight = if ($appChecksRight.Count) {
+        (($appChecksRight | ForEach-Object {
+            $cls = if ($_.Status -eq "warn") { "warn" } else { "ok" }
+            "<tr><td>$(HtmlEncode $_.Category)</td><td>$(New-Status $_.Status $cls)</td><td>$(HtmlEncode $_.Message)</td></tr>"
+        }) -join "")
+    } else {
+        ""
+    }
+    $diskRows = if ($Data.Disks.Count) {
+        (($Data.Disks | ForEach-Object {
+            $cls = if ($_.Percent -ge 90) { "bad" } elseif ($_.Percent -ge 80) { "warn" } else { "ok" }
+            "<tr><td>$(HtmlEncode $_.Mount)</td><td>$($_.TotalGb) GB</td><td>$($_.FreeGb) GB</td><td>$(New-Status ($_.Percent.ToString() + '%') $cls)</td><td>$(HtmlEncode $_.FileSystem)</td></tr>"
+        }) -join "")
+    } else { "<tr><td colspan='5' class='muted'>Geen schijven gevonden</td></tr>" }
+    $adapterRows = if ($Data.Adapters.Count) {
+        (($Data.Adapters | ForEach-Object {
+            $default = if ($_.IsDefault) { "Ja" } else { "Nee" }
+            $speedText = if ($_.SpeedMbps -gt 0) { "$($_.SpeedMbps) Mbps" } else { "Onbekend" }
+            $speedClass = if ($_.IsDefault) { Get-AdapterSpeedClass $_.SpeedMbps } else { "muted" }
+            $defaultClass = Get-DefaultAdapterClass $_.IsDefault
+            $wifiClass = Get-AdapterWifiClass $_.IsWifi $_.IsDefault
+            $nameHtml = if ($_.IsWifi) { New-Status $_.Name $wifiClass } else { HtmlEncode $_.Name }
+            "<tr><td>$nameHtml</td><td>$(HtmlEncode $_.Ip)</td><td>$(New-Status $speedText $speedClass)</td><td>$(New-Status $default $defaultClass)</td></tr>"
+        }) -join "")
+    } else { "<tr><td colspan='4' class='muted'>Geen actieve adapters gevonden</td></tr>" }
+    $domainRows = (($Data.Network.Extensive + $Data.Network.Basic) | ForEach-Object {
+        $latCls = Get-LatencyClass $_.TcpLatencyMs
+        $sslCls = if ($_.SslStatus -eq "OK") { "ok" } elseif ($_.SslStatus -eq "FOUT") { "bad" } else { "warn" }
+        $dnsCls = Get-DnsStatusClass $_.Dns
+        $portCls = Get-PortStatusClass $_.Port443
+        $tlsCls = Get-TlsStatusClass $_.Tls12
+        $httpCls = Get-HttpStatusClass $_.Http
+        "<tr><td>$(HtmlEncode $_.Domain)</td><td>$(New-Status $_.SslStatus $sslCls)</td><td>$(HtmlEncode $_.SslIssuer)</td><td>$(New-Status $_.Port443 $portCls)</td><td>$(New-Status $_.TcpLatency $latCls)</td><td>$(New-Status $_.Dns $dnsCls)</td><td>$(New-Status $_.Tls12 $tlsCls)</td><td>$(New-Status $_.Http $httpCls)</td><td>$(HtmlEncode $_.HttpTime)</td></tr>"
+    }) -join ""
+    if (-not $domainRows) { $domainRows = "<tr><td colspan='9' class='muted'>Geen endpoint checks beschikbaar</td></tr>" }
+    $lanRows = if ($Data.Lan.Devices.Count) {
+        (($Data.Lan.Devices | ForEach-Object {
+            $markerClass = if ($_.Marker -eq "*") { "marker-sonos" } elseif ($_.Marker -eq "^") { "marker-yealink" } else { "marker-none" }
+            $markerTitle = if ($_.Marker -eq "*") { "Sonos" } elseif ($_.Marker -eq "^") { "Yealink" } else { "" }
+            $markerText = if ($_.Marker) { $_.Marker } else { "-" }
+            "<tr><td><span class='marker-badge $markerClass' title='$(HtmlEncode $markerTitle)'>$(HtmlEncode $markerText)</span></td><td>$(HtmlEncode $_.Ip)</td><td>$(HtmlEncode $_.Mac)</td><td>$(HtmlEncode $_.LatencyMs) ms</td></tr>"
+        }) -join "")
+    } else { "<tr><td colspan='4' class='muted'>Geen apparaten gevonden of scan niet uitgevoerd</td></tr>" }
+    $lanTableClass = if (($Data.Lan.Devices | Measure-Object).Count -gt 6) { "table-scroll active" } else { "table-scroll" }
+    $kbRows = if ($Data.KbUpdates.Count) {
+        (($Data.KbUpdates | Select-Object -First 80 | ForEach-Object { "<tr><td>$(HtmlEncode $_.Kb)</td><td>$(HtmlEncode $_.Title)</td><td>$(HtmlEncode $_.InstalledOn)</td><td>$(HtmlEncode $_.Source)</td></tr>" }) -join "")
+    } else { "<tr><td colspan='4' class='muted'>Geen KB updates gevonden</td></tr>" }
+    $softwareRows = if ($Data.Software.Count) {
+        (($Data.Software | Select-Object -First 250 | ForEach-Object {
+            "<tr><td>$(HtmlEncode $_.Name)</td><td>$(HtmlEncode $_.Version)</td><td>$(HtmlEncode $_.Publisher)</td><td>$(HtmlEncode $_.InstallDate)</td></tr>"
+        }) -join "")
+    } else { "<tr><td colspan='4' class='muted'>Geen software gevonden</td></tr>" }
+    $updateRows = if ($Data.Updates.Count) {
+        (($Data.Updates | Select-Object -First 250 | ForEach-Object {
+            "<tr><td>$(HtmlEncode $_.Name)</td><td>$(HtmlEncode $_.Version)</td><td>$(HtmlEncode $_.Publisher)</td><td>$(HtmlEncode $_.InstallDate)</td></tr>"
+        }) -join "")
+    } else { "<tr><td colspan='4' class='muted'>Geen update-/systeemcomponenten gevonden</td></tr>" }
+
+    $fastBootText = if ($null -eq $Data.FastBoot) { "Onbekend" } elseif ($Data.FastBoot) { "Ingeschakeld" } else { "Uitgeschakeld" }
+    $fastBootClass = if ($Data.FastBoot) { "warn" } elseif ($false -eq $Data.FastBoot) { "ok" } else { "muted" }
+    $rebootText = if ($null -eq $Data.RebootPending) { "Onbekend" } elseif ($Data.RebootPending) { "Ja" } else { "Nee" }
+    $rebootClass = if ($null -eq $Data.RebootPending) { "muted" } elseif ($Data.RebootPending) { "bad" } else { "ok" }
+    $proxyText = if ($null -eq $Data.ProxyEnabled) { "Onbekend" } elseif ($Data.ProxyEnabled) { "Actief" } else { "Geen" }
+    $proxyClass = Get-ProxyClass $Data.ProxyEnabled
+    $sacClass = if ($Data.SmartAppControl.State -in @("On", "Evaluation")) { "warn" } else { "ok" }
+    $cpuAge = if ($Data.Cpu.LaunchYear) { "ca. $((Get-Date).Year - [int]$Data.Cpu.LaunchYear) jaar ($($Data.Cpu.LaunchYear))" } else { "Onbekend" }
+    $cpuAgeClass = Get-CpuAgeClass $Data.Cpu.LaunchYear
+    $uptimeClass = Get-UptimeClass $Data.Uptime.Days
+    $osClass = Get-OsClass $Data.Os
+    $lastUpdateClass = Get-LastUpdateClass $Data.LastWindowsUpdate
+    $clipboardBanner = if ($Data.ClipboardOk) { "" } else { "<div class='banner warn-bg'>Klembord kopieren is niet gelukt. Het rapportbestand is wel aangemaakt.</div>" }
+
+    $eventLogEscaped = HtmlEncode (EventLogText $Data.EventLogs)
+    $exquiseLogCards = ExquiseLogCardsHtml $Data.ExquiseLogs
+    $generated = (Get-Date).ToString("dd MMM yyyy HH:mm")
+    $ticketFormatted = Format-TicketNumber $Data.Ticketnummer
+    $ticketHtml = if ($ticketFormatted) {
+        "<a href='$(AttrEncode (Get-TicketUrl $ticketFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $ticketFormatted)</a>"
+    } elseif ($Data.Ticketnummer) {
+        HtmlEncode $Data.Ticketnummer
+    } else {
+        ""
+    }
+    $licenseFormatted = Format-LicenseNumber $Data.Licentie
+    $licenseHtml = if ($licenseFormatted) {
+        "<a href='$(AttrEncode (Get-LicenseUrl $licenseFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $licenseFormatted)</a>"
+    } elseif ($Data.Licentie) {
+        HtmlEncode $Data.Licentie
+    } else {
+        ""
+    }
+    $metaParts = @()
+    if ($ticketHtml) { $metaParts += "<span><strong>Ticket</strong> $ticketHtml</span>" }
+    if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
+    if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
+    if ($licenseHtml) { $metaParts += "<span><strong>Licentie</strong> $licenseHtml</span>" }
+    $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
+    $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
+    $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
+    $domainTotal = $domainItems.Count
+    $domainOk = @($domainItems | Where-Object { $_.Dns -eq "Succesvol" -and $_.Port443 -eq "Open" -and $_.Tls12 -eq "OK" }).Count
+    $domainClass = if ($domainTotal -gt 0 -and $domainOk -eq $domainTotal) { "ok" } elseif ($domainOk -gt 0) { "warn" } else { "bad" }
+    $wifiDefault = @($Data.Adapters | Where-Object { $_.IsWifi -and $_.IsDefault } | Select-Object -First 1)
+    $adapterSummaryText = if ($wifiDefault.Count) { "Wi-Fi actief" } elseif ($Data.Adapters.Count) { "Bekabeld" } else { "Geen adapter" }
+    $adapterSummaryClass = if ($wifiDefault.Count) { "warn" } elseif ($Data.Adapters.Count) { "ok" } else { "bad" }
+    $appWarnCount = @($Data.AppChecks | Where-Object { $_.Status -eq "warn" }).Count
+    $appSummaryClass = if ($appWarnCount -gt 0) { "warn" } else { "ok" }
+    $eventSummaryClass = if ($Data.EventLogs.Count -gt 0) { "warn" } else { "ok" }
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>Test-Job Rapport</title>
+<style>
+:root{--bg:#0d1117;--panel:#1c2333;--card:#0d1117;--card2:#121a26;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#3fb950;--yellow:#d29922;--red:#f85149;--blue:#58a6ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI",Verdana,sans-serif;font-size:13px;line-height:1.45}
+.wrap{max-width:1200px;margin:24px auto;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 22px 60px rgba(0,0,0,.35)}.header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding-bottom:18px;margin-bottom:14px}.header-main{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{margin:0;color:var(--blue);font-family:Consolas,"Segoe UI",monospace;font-size:22px;letter-spacing:.02em}.subtitle{color:var(--muted);margin-top:6px}.report-meta{display:flex;gap:8px;flex-wrap:wrap;color:#d7dde5;margin-top:12px}.report-meta strong{color:var(--muted);font-family:Consolas,monospace;font-size:11px;text-transform:uppercase;margin-right:6px}.meta-sep{color:var(--muted)}.filename-line{margin-top:10px;color:#d7dde5}.filename-line strong{color:var(--muted);font-family:Consolas,monospace;font-size:11px;text-transform:uppercase;margin-right:6px}.ticket-link{color:var(--blue);text-decoration:none;font-weight:700}.ticket-link:hover{text-decoration:underline}.banner{padding:11px 14px;border-radius:6px;margin-bottom:14px}.warn-bg{background:#604500;color:#fff}
+.summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:0 0 14px}
+.summary-item{background:var(--card);border:1px solid #21262d;border-left:4px solid var(--green);border-radius:6px;padding:10px}
+.summary-item.warn{border-left-color:var(--yellow)}.summary-item.bad{border-left-color:var(--red)}.summary-item label{display:block;color:var(--muted);font-family:Consolas,monospace;font-size:10px;text-transform:uppercase}.summary-item span{display:block;margin-top:3px;color:var(--text);font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{background:var(--card);border:1px solid #21262d;border-radius:6px;padding:12px}.card.wide{grid-column:span 2}.card.full{grid-column:1/-1}
+.title{font-family:Consolas,"Segoe UI",monospace;font-weight:700;color:#fff;margin-bottom:10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em}.kv{display:grid;grid-template-columns:160px 1fr;gap:6px 10px}.kv label{color:var(--muted);font-family:Consolas,monospace;font-size:11px;text-transform:uppercase}
+.status{display:inline-block;padding:0;border:0;font-size:12px;font-weight:700}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #21262d;padding:8px;text-align:left;vertical-align:top}th{color:var(--muted);font-family:Consolas,monospace;font-size:11px;text-transform:uppercase}
+pre{white-space:pre-wrap;background:#080d13;border:1px solid #21262d;border-radius:6px;padding:12px;max-height:430px;overflow:auto;color:#d7dde5;font-family:Consolas,monospace;font-size:12px;line-height:1.45}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}.toolbar input{background:#0b1117;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;min-width:220px}
+button{background:#182332;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;cursor:pointer}button:hover{border-color:var(--blue)}
+.action-link{display:inline-flex;align-items:center;justify-content:center;background:#182332;border:1px solid #3a4658;color:#dbe5ef;text-decoration:none;border-radius:999px;padding:8px 14px;font-weight:700;font-size:13px;transition:background .15s ease,border-color .15s ease,color .15s ease}.action-link:hover{background:#202d3d;border-color:#55657c;color:#fff}
+.match{background:#604500;color:#fff;padding:0 2px;border-radius:2px}.match-active{background:#2f81f7;color:#fff}
+.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.section-meta{color:var(--muted);font-size:12px}
+.collapsible-body{display:none}
+.collapsible-body.open{display:block}
+.speedtest-card{display:grid;gap:10px}.speedtest-note{color:var(--muted);font-size:12px;line-height:1.5}
+.legend{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.legend-item{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.marker-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;border:1px solid var(--line);font-weight:700}
+.marker-sonos{color:#f4b942;border-color:#f4b942;background:rgba(244,185,66,.12)}
+.marker-yealink{color:#58a6ff;border-color:#58a6ff;background:rgba(88,166,255,.12)}
+.marker-none{color:var(--muted);border-color:var(--line);background:#131922}
+.stack-card{display:grid;gap:12px}
+.stack-item{background:var(--card2);border:1px solid #21262d;border-radius:6px;padding:12px}
+.stack-item .title{margin-bottom:8px}
+.network-stack{height:100%}
+.network-shell{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+.network-shell .card{height:100%}
+.softwarechecks-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.softwarechecks-grid table tr:first-child th{padding-top:0}
+.table-scroll{overflow:visible}.table-scroll.active{max-height:270px;overflow:auto;border:1px solid var(--line);border-radius:8px}.table-scroll.active table{margin:0}.table-scroll.active thead th{position:sticky;top:0;background:var(--card);z-index:1}
+.log-card .title-row{margin-bottom:8px}.log-card.log-expanded{position:fixed;inset:16px;z-index:1000;display:flex;flex-direction:column;background:#0d1117;box-shadow:0 0 0 9999px rgba(0,0,0,.72)}.log-card.log-expanded pre{flex:1;max-height:none}.log-card.log-expanded .toolbar{flex:0 0 auto}
+@media(max-width:1000px){.wrap{margin:0;border-radius:0}.grid,.summary-grid{grid-template-columns:1fr}.card.wide{grid-column:span 1}.header{display:block}.kv{grid-template-columns:1fr}.softwarechecks-grid{grid-template-columns:1fr}.network-shell{grid-template-columns:1fr}}
+</style>
+<script>
+function copyLog(id){var t=document.getElementById(id).innerText;navigator.clipboard&&navigator.clipboard.writeText(t);}
+function toggleLog(id,btn){var pre=document.getElementById(id);var card=pre.closest('.log-card');var open=card.classList.toggle('log-expanded');if(btn){btn.textContent=open?'Sluit groot':'Vergroot log';}}
+function escapeRegExp(v){return v.replace(/[.*+?^`$`{}()|[\]\\]/g,'\\$&');}
+function setActiveMatch(preId,idx,behavior){
+  var pre=document.getElementById(preId);
+  if(!pre){return;}
+  var matches=pre.querySelectorAll('mark.match');
+  matches.forEach(function(m){m.classList.remove('match-active');});
+  if(!matches.length){
+    pre.dataset.matchIndex='-1';
+    return;
+  }
+  if(idx>=matches.length){idx=0;}
+  if(idx<0){idx=matches.length-1;}
+  pre.dataset.matchIndex=idx;
+  matches[idx].classList.add('match-active');
+  matches[idx].scrollIntoView({block:'center',behavior:behavior||'smooth'});
+}
+function highlightLog(preId,inputId){
+  var pre=document.getElementById(preId);
+  var input=document.getElementById(inputId);
+  if(!pre.dataset.raw){pre.dataset.raw=pre.textContent;}
+  var raw=pre.dataset.raw;
+  var q=input.value.trim();
+  pre.dataset.lastQuery=q;
+  pre.dataset.matchIndex='-1';
+  if(!q){
+    pre.innerHTML=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return;
+  }
+  var esc=escapeRegExp(q);
+  var html=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  pre.innerHTML=html.replace(new RegExp(esc,'gi'),function(m){return '<mark class=\"match\">'+m+'</mark>';});
+  var matches=pre.querySelectorAll('mark.match');
+  if(matches.length){setActiveMatch(preId,0,'smooth');}
+}
+function searchOrNextLog(preId,inputId){
+  var pre=document.getElementById(preId);
+  var input=document.getElementById(inputId);
+  if(!pre||!input){return;}
+  var q=input.value.trim();
+  var matches=pre.querySelectorAll('mark.match');
+  if(q && pre.dataset.lastQuery===q && matches.length){
+    jumpMatch(preId,1);
+    return;
+  }
+  highlightLog(preId,inputId);
+}
+function jumpMatch(preId,dir){
+  var pre=document.getElementById(preId);
+  var matches=pre.querySelectorAll('mark.match');
+  if(!matches.length){return;}
+  var idx=parseInt(pre.dataset.matchIndex||'-1',10);
+  idx=idx+dir;
+  setActiveMatch(preId,idx,'smooth');
+}
+function handleSearchKey(evt,preId){
+  if(evt.key!=='Enter'){return;}
+  evt.preventDefault();
+  var inputId=preId==='events'?'eventsSearch':'exqlogsSearch'+preId.replace('exqlogs','');
+  if(document.getElementById(inputId)){searchOrNextLog(preId,inputId);}
+  if(evt.shiftKey){jumpMatch(preId,-1);}
+}
+function toggleSection(id,btn){
+  var el=document.getElementById(id);
+  var open=el.classList.toggle('open');
+  if(btn){btn.textContent=open?'Inklappen':'Uitklappen';}
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+$clipboardBanner
+<div class="header">
+  <div style="width:100%;">
+    <div class="header-main">
+      <h1>Test-Job Rapport</h1>
+      <a class="action-link" href="https://www.speedtest.net/" target="_blank" rel="noopener noreferrer">Open Speedtest.net</a>
+    </div>
+    <div class="report-meta">$metaHtml <span>$generated - Rapport staat op het klembord voor plakken in TOPdesk</span></div>
+  </div>
+</div>
+
+<div class="summary-grid">
+  <div class="summary-item"><label>Machine</label><span>$(HtmlEncode $Data.ComputerName)</span></div>
+  <div class="summary-item $domainClass"><label>Firewall</label><span>$domainOk / $domainTotal OK</span></div>
+  <div class="summary-item $adapterSummaryClass"><label>Adapter</label><span>$adapterSummaryText</span></div>
+  <div class="summary-item $appSummaryClass"><label>Softwarechecks</label><span>$appWarnCount waarschuwing(en)</span></div>
+  <div class="summary-item $eventSummaryClass"><label>Event logs</label><span>$($Data.EventLogs.Count) melding(en)</span></div>
+</div>
+
+<div class="grid">
+  <section class="card wide">
+    <div class="title">Machine</div>
+    <div class="kv">
+      <label>PC</label><div>$(HtmlEncode $Data.ComputerName)</div>
+      <label>Gebruiker</label><div>$(HtmlEncode $Data.LoggedUser)</div>
+      <label>Model</label><div>$(HtmlEncode $Data.SystemModel)</div>
+      <label>Besturing</label><div>$(New-Status $Data.Os.Full $osClass)</div>
+      <label>Windows installatie</label><div>$(HtmlEncode $Data.WindowsInstall.Date) <span class="muted">$(HtmlEncode $Data.WindowsInstall.Source)</span></div>
+      <label>CPU</label><div>$(HtmlEncode $Data.Cpu.Name)</div>
+      <label>CPU leeftijd</label><div>$(New-Status $cpuAge $cpuAgeClass)</div>
+      <label>Geheugen</label><div>$($Data.Memory.TotalGb) GB ($($Data.Memory.Percent)% gebruikt)</div>
+      <label>Uptime</label><div>$(New-Status $Data.Uptime.Text $uptimeClass)</div>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <div class="title">Windows en beveiliging</div>
+    <div class="kv">
+      <label>Snel opstarten</label><div>$(New-Status $fastBootText $fastBootClass)</div>
+      <label>Herstart nodig</label><div>$(New-Status $rebootText $rebootClass)</div>
+      <label>Smart App Control</label><div>$(New-Status $Data.SmartAppControl.State $sacClass)</div>
+      <label>Windows Update</label><div>$(New-Status $Data.LastWindowsUpdate $lastUpdateClass)</div>
+      <label>WebView2</label><div>$(if($Data.WebView2.Installed){HtmlEncode $Data.WebView2.Version}else{"Niet geinstalleerd"})</div>
+      <label>.NET Framework</label><div>$(HtmlEncode $Data.DotNet)</div>
+      <label>Antivirus</label><div>$(HtmlEncode (($Data.Antivirus | Where-Object { $_ }) -join ", "))</div>
+    </div>
+  </section>
+
+  <section class="card full">
+    <div class="title">Schijven</div>
+    <table><tr><th>Schijf</th><th>Totaal</th><th>Vrij</th><th>Gebruik</th><th>FS</th></tr>$diskRows</table>
+  </section>
+
+  <section class="card full">
+    <div class="title-row">
+      <div class="title">Firewall check endpoints</div>
+      <div>$(New-Status "$domainOk / $domainTotal OK" $domainClass)</div>
+    </div>
+    <table><tr><th>Domein</th><th>SSL</th><th>SSL uitgever</th><th>Poort 443</th><th>Latency</th><th>DNS</th><th>TLS 1.2</th><th>HTTP</th><th>HTTP tijd</th></tr>$domainRows</table>
+  </section>
+
+  <section class="card full">
+    <div class="title">Netwerk</div>
+    <div class="network-shell">
+      <div class="stack-card network-stack">
+        <div class="stack-item">
+          <div class="title">Samenvatting</div>
+          <div class="kv">
+            <label>Publiek IP</label><div>$(HtmlEncode $Data.Wan.Ip)</div>
+            <label>ISP</label><div>$(HtmlEncode $Data.Wan.Isp)</div>
+            <label>Organisatie</label><div>$(HtmlEncode $Data.Wan.As)</div>
+            <label>Gateway</label><div>$(HtmlEncode $Data.Gateway)</div>
+            <label>DNS</label><div>$(HtmlEncode $Data.DnsServers)</div>
+            <label>Proxy</label><div>$(New-Status $proxyText $proxyClass)</div>
+          </div>
+        </div>
+        <div class="stack-item">
+          <div class="title">Adapters</div>
+          <table><tr><th>Naam</th><th>IP</th><th>Snelheid</th><th>Default</th></tr>$adapterRows</table>
+        </div>
+      </div>
+      <div class="stack-item">
+        <div class="title-row">
+          <div class="title">Apparaten</div>
+          <div class="legend">
+            <span class="legend-item"><span class="marker-badge marker-sonos">*</span> Sonos</span>
+            <span class="legend-item"><span class="marker-badge marker-yealink">^</span> Yealink</span>
+          </div>
+        </div>
+        <div class="$lanTableClass"><table><thead><tr><th></th><th>IP</th><th>MAC</th><th>Latency</th></tr></thead><tbody>$lanRows</tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card full">
+    <div class="title">Softwarechecks</div>
+    <div class="softwarechecks-grid">
+      <table><tr><th>Categorie</th><th>Status</th><th>Melding</th></tr>$appRowsLeft</table>
+      <table><tr><th>Categorie</th><th>Status</th><th>Melding</th></tr>$appRowsRight</table>
+    </div>
+  </section>
+
+  <section class="card full">
+    <div class="section-head">
+      <div>
+        <div class="title">Geinstalleerde software</div>
+        <div class="section-meta">$($Data.Software.Count) items</div>
+      </div>
+      <button onclick="toggleSection('softwareTable',this)">Uitklappen</button>
+    </div>
+    <div id="softwareTable" class="collapsible-body">
+      <table><tr><th>Naam</th><th>Versie</th><th>Publisher</th><th>Installatie</th></tr>$softwareRows</table>
+    </div>
+  </section>
+
+  <section class="card full">
+    <div class="section-head">
+      <div>
+        <div class="title">Updates en systeemcomponenten</div>
+        <div class="section-meta">$($Data.Updates.Count) items + $($Data.KbUpdates.Count) KB updates</div>
+      </div>
+      <button onclick="toggleSection('updateTable',this)">Uitklappen</button>
+    </div>
+    <div id="updateTable" class="collapsible-body">
+      <div class="title">Updates en systeemcomponenten</div>
+      <table><tr><th>Naam</th><th>Versie</th><th>Publisher</th><th>Installatie</th></tr>$updateRows</table>
+      <div class="title" style="margin-top:16px">Windows KB updates</div>
+      <table><tr><th>KB</th><th>Titel</th><th>Datum</th><th>Bron</th></tr>$kbRows</table>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <div class="title">Exquise processen</div>
+    <table><tr><th>Naam</th><th>PID</th><th>Geheugen</th></tr>$(ProcessRows $Data.ExquiseProcesses)</table>
+  </section>
+
+  <section class="card wide">
+    <div class="title">ImageAcquisitionService processen</div>
+    <table><tr><th>Naam</th><th>PID</th><th>Geheugen</th></tr>$(ProcessRows $Data.IasProcesses)</table>
+  </section>
+
+  <section class="card full log-card">
+    <div class="title-row">
+      <div class="title">Windows Event Log</div>
+      <button onclick="toggleLog('events',this)">Vergroot log</button>
+    </div>
+    <div class="toolbar">
+      <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
+      <button onclick="searchOrNextLog('events','eventsSearch')">Zoeken</button>
+      <button onclick="jumpMatch('events',-1)">Vorige</button>
+      <button onclick="jumpMatch('events',1)">Volgende</button>
+      <button onclick="copyLog('events')">Kopieer log</button>
+    </div>
+    <pre id="events">$eventLogEscaped</pre>
+  </section>
+
+$exquiseLogCards
+
+</div>
+</div>
+</body>
+</html>
+"@
+    Set-Content -Path $Path -Value $html -Encoding UTF8
+}
+
+
+function Invoke-TestJobDiagnosis {
+    $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+    if ($Script:LaunchSource -eq "github") {
+        Set-TestJobProgress 2 "Online versie geladen van publieke bron"
+    } else {
+        Set-TestJobProgress 2 "Lokale fallbackversie gestart"
+    }
+    Set-TestJobProgress 5 "Test-Job diagnose starten"
+
+    Set-TestJobProgress 12 "Basisgegevens parallel verzamelen"
+    $parallelResults = Invoke-ParallelTaskScripts -MaxWorkers 7 -Tasks @(
+        [pscustomobject]@{
+            Name = "installed_apps"
+            ScriptText = @"
+$(Get-FunctionSource 'Get-InstalledApps')
+Get-InstalledApps
+"@
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "windows_kb_updates"
+            ScriptText = @"
+$(Get-FunctionSource 'Get-WindowsKbUpdates')
+Get-WindowsKbUpdates
+"@
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "event_logs"
+            ScriptText = @"
+$(Get-FunctionSource 'Get-EventLogRows')
+Get-EventLogRows
+"@
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "exquise_logs"
+            ScriptText = @"
+$(Get-FunctionSource 'Get-ExquiseLogs')
+Get-ExquiseLogs
+"@
+            Arguments = @()
+            Default = @()
+        },
+        [pscustomobject]@{
+            Name = "wan"
+            ScriptText = @"
+$(Get-FunctionSource 'Get-WanInfo')
+Get-WanInfo
+"@
+            Arguments = @()
+            Default = @([pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" })
+        }
+    )
+
+    Set-TestJobProgress 30 "Geinstalleerde software indelen"
+    $apps = @($parallelResults["installed_apps"])
+    $splitApps = Invoke-SafeCheck "split_apps" { Split-InstalledApps $apps } ([pscustomobject]@{ Software = @(); Updates = @() })
+
+    Set-TestJobProgress 42 "Firewall endpoints testen"
+    $domainTests = Invoke-SafeCheck "domain_tests" { Test-DomainSet } ([pscustomobject]@{ Extensive = @(); Basic = @(); Failures = @() })
+
+    Set-TestJobProgress 58 "LAN apparaten scannen"
+    $lanInfo = Invoke-SafeCheck "lan_scan" { Get-LanScan } ([pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() })
+
+    Set-TestJobProgress 70 "Systeem, beveiliging en netwerkdetails verzamelen"
+    $data = [pscustomobject]@{
+        Timestamp = Get-Date
+        Naam = ""
+        Praktijk = ""
+        Ticketnummer = ""
+        Licentie = ""
+        ComputerName = Invoke-SafeCheck "computer_name" { $env:COMPUTERNAME } ""
+        LoggedUser = Invoke-SafeCheck "logged_user" { "$env:USERDOMAIN\$env:USERNAME" } ""
+        Os = Invoke-SafeCheck "os_info" { Get-OsInfo } ([pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" })
+        SystemModel = Invoke-SafeCheck "system_model" { Get-SystemModel } ""
+        Cpu = Invoke-SafeCheck "cpu_info" { Get-CpuInfo } ([pscustomobject]@{ Name = "Niet beschikbaar"; Cores = 0; Logical = 0; LaunchYear = $null })
+        Memory = Invoke-SafeCheck "memory_info" { Get-MemoryInfo } ([pscustomobject]@{ TotalGb = "?"; AvailableGb = "?"; Percent = "?" })
+        Disks = @(Invoke-SafeCheck "disks" { Get-DiskInfo } @())
+        Uptime = Invoke-SafeCheck "uptime" { Get-UptimeInfo } ([pscustomobject]@{ Text = "-" })
+        FastBoot = Invoke-SafeCheck "fastboot" { Get-FastBoot } $null
+        RebootPending = Invoke-SafeCheck "reboot_pending" { Get-RebootPending } $null
+        ProxyEnabled = Invoke-SafeCheck "proxy" { Get-ProxyEnabled } $null
+        WebView2 = Invoke-SafeCheck "webview2" { Get-WebView2Info } ([pscustomobject]@{ Installed = $false; Version = "" })
+        DotNet = Invoke-SafeCheck "dotnet" { Get-DotNetVersion } ""
+        LastWindowsUpdate = Invoke-SafeCheck "last_windows_update" { Get-LastWindowsUpdate } ""
+        WindowsInstall = Invoke-SafeCheck "windows_install_date" { Get-WindowsInstallDate $apps } ([pscustomobject]@{ Date = ""; Source = "onbekend" })
+        KbUpdates = @($parallelResults["windows_kb_updates"])
+        Antivirus = @(Invoke-SafeCheck "antivirus" { Get-AntivirusProducts } @())
+        SmartAppControl = Invoke-SafeCheck "smart_app_control" { Get-SmartAppControl } ([pscustomobject]@{ State = "Niet beschikbaar" })
+        ExquiseProcesses = @(Invoke-SafeCheck "exquise_processes" { Get-ProcessInfo "exquise" } @())
+        IasProcesses = @(Invoke-SafeCheck "ias_processes" { Get-ProcessInfo "imageacquisition" } @())
+        Adapters = @(Invoke-SafeCheck "network_adapters" { Get-NetworkAdapters } @())
+        Gateway = Invoke-SafeCheck "gateway" { Get-GatewayIp } ""
+        DnsServers = Invoke-SafeCheck "dns_servers" { Get-DnsServers } ""
+        Wan = if ($parallelResults["wan"] -and $parallelResults["wan"].Count -gt 0) { $parallelResults["wan"][0] } else { [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" } }
+        Network = $domainTests
+        Lan = $lanInfo
+        EventLogs = @($parallelResults["event_logs"])
+        ExquiseLogs = @($parallelResults["exquise_logs"])
+        AppChecks = @(Invoke-SafeCheck "app_checks" { Get-AppChecks $splitApps.Software } @())
+        Software = @($splitApps.Software)
+        Updates = @($splitApps.Updates)
+        CollectionErrors = $Script:CollectionErrors
+        ClipboardOk = $false
+        ReportFileName = ""
+    }
+    Set-TestJobProgress 82 "Diagnosegegevens verzameld"
+    return $data
+}
+
+function Start-TestJobProgressWindow {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = [System.Windows.Forms.Form]::new()
+    $form.Text = "Test-Job Diagnose - Vertimart"
+    $form.StartPosition = "CenterScreen"
+    $form.Size = [System.Drawing.Size]::new(660, 720)
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $true
+    $form.TopMost = $true
+    $form.BackColor = [System.Drawing.Color]::FromArgb(18, 24, 32)
+    $form.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+
+    $headerLogo = [System.Windows.Forms.PictureBox]::new()
+    $headerLogo.Image = Get-TestJobLogoImage
+    $headerLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $headerLogo.Size = [System.Drawing.Size]::new(54, 54)
+    $headerLogo.Location = [System.Drawing.Point]::new(38, 20)
+    [void]$form.Controls.Add($headerLogo)
+
+    $title = [System.Windows.Forms.Label]::new()
+    $title.Text = "Test-Job Diagnose"
+    $title.Font = [System.Drawing.Font]::new("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
+    $title.AutoSize = $true
+    $title.ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255)
+    $title.Location = [System.Drawing.Point]::new(104, 24)
+    [void]$form.Controls.Add($title)
+
+    $subtitle = [System.Windows.Forms.Label]::new()
+    $subtitle.Text = "Vul de gegevens rustig in; het rapport opent pas via de knop."
+    $subtitle.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+    $subtitle.AutoSize = $false
+    $subtitle.Size = [System.Drawing.Size]::new(430, 36)
+    $subtitle.Location = [System.Drawing.Point]::new(106, 53)
+    $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
+    [void]$form.Controls.Add($subtitle)
+
+    $intakeTop = 96
+
+    $intakePanel = [System.Windows.Forms.Panel]::new()
+    $intakePanel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
+    $intakePanel.BorderStyle = "FixedSingle"
+    $intakePanel.Size = [System.Drawing.Size]::new(560, 168)
+    $intakePanel.Location = [System.Drawing.Point]::new(40, $intakeTop)
+    [void]$form.Controls.Add($intakePanel)
+
+    function Add-IntakeFieldV2 {
+        param([string]$LabelText, [int]$Left, [int]$Top, [string]$Placeholder, [string]$Marker)
+        $box = [System.Windows.Forms.Panel]::new()
+        $box.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+        $box.BorderStyle = "FixedSingle"
+        $box.Size = [System.Drawing.Size]::new(245, 38)
+        $box.Location = [System.Drawing.Point]::new($Left, $Top)
+        [void]$intakePanel.Controls.Add($box)
+
+        $hasMarker = -not [string]::IsNullOrWhiteSpace($Marker)
+        if ($hasMarker) {
+            $badge = [System.Windows.Forms.Panel]::new()
+            $badge.BackColor = [System.Drawing.Color]::FromArgb(18, 31, 47)
+            $badge.Size = [System.Drawing.Size]::new(38, 26)
+            $badge.Location = [System.Drawing.Point]::new(8, 5)
+            [void]$box.Controls.Add($badge)
+
+            $icon = [System.Windows.Forms.Label]::new()
+            $icon.Text = $Marker
+            $icon.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
+            $icon.AutoSize = $false
+            $icon.TextAlign = "MiddleCenter"
+            $icon.Size = [System.Drawing.Size]::new(38, 26)
+            $icon.Location = [System.Drawing.Point]::new(0, 0)
+            $icon.ForeColor = [System.Drawing.Color]::FromArgb(143, 180, 214)
+            [void]$badge.Controls.Add($icon)
+        }
+
+        $textbox = [System.Windows.Forms.TextBox]::new()
+        $textbox.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+        if ($hasMarker) {
+            $textbox.Size = [System.Drawing.Size]::new(184, 22)
+            $textbox.Location = [System.Drawing.Point]::new(52, 8)
+        } else {
+            $textbox.Size = [System.Drawing.Size]::new(220, 22)
+            $textbox.Location = [System.Drawing.Point]::new(12, 8)
+        }
+        $textbox.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+        $textbox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+        $textbox.BorderStyle = "None"
+        [void]$box.Controls.Add($textbox)
+        return $textbox
+    }
+
+    $Script:IntakeNaam = Add-IntakeFieldV2 "Naam" 20 18 "Naam" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakeNaam -Placeholder "Naam"
+    $Script:IntakePraktijk = Add-IntakeFieldV2 "Praktijk" 292 18 "Praktijk" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakePraktijk -Placeholder "Praktijk"
+    $Script:IntakeTicket = Add-IntakeFieldV2 "Ticketnummer" 20 92 "Ticketnummer" "VM"
+    Initialize-IntakeTextBox -TextBox $Script:IntakeTicket -Placeholder "Ticketnummer" -TicketMode
+    $Script:IntakeLicentie = Add-IntakeFieldV2 "Licentie" 292 92 "Licentie" ""
+    Initialize-IntakeTextBox -TextBox $Script:IntakeLicentie -Placeholder "Licentie"
+
+    $stepCard = [System.Windows.Forms.Panel]::new()
+    $stepCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+    $stepCard.BorderStyle = "FixedSingle"
+    $stepCard.Size = [System.Drawing.Size]::new(430, 54)
+    $stepCard.Location = [System.Drawing.Point]::new(40, 282)
+    [void]$form.Controls.Add($stepCard)
+
+    $stepLabel = [System.Windows.Forms.Label]::new()
+    $stepLabel.Text = "HUIDIGE STAP"
+    $stepLabel.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+    $stepLabel.AutoSize = $false
+    $stepLabel.Size = [System.Drawing.Size]::new(390, 15)
+    $stepLabel.Location = [System.Drawing.Point]::new(10, 7)
+    $stepLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$stepCard.Controls.Add($stepLabel)
+
+    $status = [System.Windows.Forms.Label]::new()
+    $status.Text = "Starten..."
+    $status.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+    $status.AutoSize = $false
+    $status.Size = [System.Drawing.Size]::new(390, 24)
+    $status.Location = [System.Drawing.Point]::new(10, 24)
+    $status.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+    [void]$stepCard.Controls.Add($status)
+
+    $percentCard = [System.Windows.Forms.Panel]::new()
+    $percentCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
+    $percentCard.BorderStyle = "FixedSingle"
+    $percentCard.Size = [System.Drawing.Size]::new(120, 54)
+    $percentCard.Location = [System.Drawing.Point]::new(480, 282)
+    [void]$form.Controls.Add($percentCard)
+
+    $percentLabel = [System.Windows.Forms.Label]::new()
+    $percentLabel.Text = "VOORTGANG"
+    $percentLabel.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+    $percentLabel.AutoSize = $false
+    $percentLabel.TextAlign = "MiddleRight"
+    $percentLabel.Size = [System.Drawing.Size]::new(96, 15)
+    $percentLabel.Location = [System.Drawing.Point]::new(10, 7)
+    $percentLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$percentCard.Controls.Add($percentLabel)
+
+    $percent = [System.Windows.Forms.Label]::new()
+    $percent.Text = "0%"
+    $percent.Font = [System.Drawing.Font]::new("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+    $percent.AutoSize = $false
+    $percent.TextAlign = "MiddleRight"
+    $percent.Size = [System.Drawing.Size]::new(96, 26)
+    $percent.Location = [System.Drawing.Point]::new(10, 23)
+    $percent.ForeColor = [System.Drawing.Color]::FromArgb(88, 166, 255)
+    [void]$percentCard.Controls.Add($percent)
+
+    $bar = [System.Windows.Forms.ProgressBar]::new()
+    $bar.Minimum = 0
+    $bar.Maximum = 100
+    $bar.Value = 0
+    $bar.Style = "Continuous"
+    $bar.Size = [System.Drawing.Size]::new(560, 18)
+    $bar.Location = [System.Drawing.Point]::new(40, 350)
+    [void]$form.Controls.Add($bar)
+
+    $phaseNames = @("Start", "Software", "Firewall", "Netwerk", "Logs", "Rapport")
+    $phaseLabels = @()
+    for ($i = 0; $i -lt $phaseNames.Count; $i++) {
+        $phase = [System.Windows.Forms.Label]::new()
+        $phase.Text = $phaseNames[$i]
+        $phase.Font = [System.Drawing.Font]::new("Consolas", 7.5, [System.Drawing.FontStyle]::Bold)
+        $phase.AutoSize = $false
+        $phase.TextAlign = "MiddleCenter"
+        $phase.Size = [System.Drawing.Size]::new(88, 18)
+        $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 376)
+        $phase.ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
+        [void]$form.Controls.Add($phase)
+        $phaseLabels += $phase
+    }
+
+    $log = [System.Windows.Forms.TextBox]::new()
+    $log.Multiline = $true
+    $log.ReadOnly = $true
+    $log.ScrollBars = "Vertical"
+    $log.Font = [System.Drawing.Font]::new("Consolas", 9)
+    $log.Size = [System.Drawing.Size]::new(560, 138)
+    $log.Location = [System.Drawing.Point]::new(40, 416)
+    $log.BackColor = [System.Drawing.Color]::FromArgb(11, 17, 23)
+    $log.ForeColor = [System.Drawing.Color]::FromArgb(215, 221, 229)
+    $log.BorderStyle = "FixedSingle"
+    [void]$form.Controls.Add($log)
+
+    $hint = [System.Windows.Forms.Label]::new()
+    $hint.Text = "Het rapport staat na openen op het klembord, plak dit in TOPdesk met CTRL+V"
+    $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8)
+    $hint.AutoSize = $false
+    $hint.Size = [System.Drawing.Size]::new(360, 38)
+    $hint.Location = [System.Drawing.Point]::new(40, 568)
+    $hint.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
+    [void]$form.Controls.Add($hint)
+
+    $openButton = [System.Windows.Forms.Button]::new()
+    $openButton.Text = "Diagnose loopt..."
+    $openButton.Enabled = $false
+    $openButton.FlatStyle = "Flat"
+    $openButton.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 10, [System.Drawing.FontStyle]::Bold)
+    $openButton.Size = [System.Drawing.Size]::new(180, 38)
+    $openButton.Location = [System.Drawing.Point]::new(420, 568)
+    $openButton.BackColor = [System.Drawing.Color]::FromArgb(32, 44, 58)
+    $openButton.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
+    $openButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(48, 58, 72)
+    [void]$form.Controls.Add($openButton)
+
+    $Script:ProgressForm = $form
+    $Script:ProgressBar = $bar
+    $Script:ProgressStatus = $status
+    $Script:ProgressPercent = $percent
+    $Script:ProgressPhases = $phaseLabels
+    $Script:ProgressLog = $log
+    $Script:OpenReportButton = $openButton
+    $Script:DiagnosisResult = $null
+    $Script:WorkerProcess = $null
+    $Script:WorkerProgressLine = 0
+    $Script:AutoSubmitRequested = $false
+    $Script:AutoSubmitExecuted = $false
+    $Script:WorkerResultPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_result_{0}.xml" -f ([guid]::NewGuid().ToString("N")))
+    $Script:WorkerProgressPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_progress_{0}.jsonl" -f ([guid]::NewGuid().ToString("N")))
+    Remove-Item -LiteralPath $Script:WorkerResultPath,$Script:WorkerProgressPath -Force -ErrorAction SilentlyContinue
+
+    $startTime = Get-Date
+    $intakeIsBlank = {
+        return [string]::IsNullOrWhiteSpace($Script:IntakeNaam.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakePraktijk.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakeTicket.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakeLicentie.Text)
+    }
+    $finalizeReport = {
+        if ($Script:AutoSubmitExecuted -or -not $Script:DiagnosisResult) { return }
+        try {
+            $Script:AutoSubmitExecuted = $true
+            $Script:OpenReportButton.Enabled = $false
+            $Script:OpenReportButton.Text = "Rapport openen..."
+            $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(32, 44, 58)
+            $formData = Get-TestJobIntakeData
+            $Script:DiagnosisResult.Naam = $formData.Naam
+            $Script:DiagnosisResult.Praktijk = $formData.Praktijk
+            $Script:DiagnosisResult.Ticketnummer = $formData.Ticketnummer
+            $Script:DiagnosisResult.Licentie = $formData.Licentie
+            $fileName = Get-ReportFileName $Script:DiagnosisResult
+            $Script:DiagnosisResult.ReportFileName = $fileName
+            $reportPath = Join-Path $Script:OutputDir $Script:DiagnosisResult.ReportFileName
+            Set-TestJobProgress 86 "HTML rapport schrijven"
+            Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
+            Set-TestJobProgress 93 "Rapport op klembord zetten"
+            $Script:DiagnosisResult.ClipboardOk = Copy-FileToClipboard $reportPath
+            Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
+            Set-TestJobProgress 100 "Rapport openen"
+            Start-Process -FilePath $reportPath
+            $form.Close()
+        } catch {
+            $Script:AutoSubmitExecuted = $false
+            Set-TestJobProgress 100 ("Rapport kon niet worden geopend: {0}" -f $_.Exception.Message)
+            $Script:OpenReportButton.Text = "Open rapport"
+            $Script:OpenReportButton.Enabled = $true
+        }
+    }
+
+    $openButton.Add_Click({
+        & $finalizeReport
+    })
+
+    $pollTimer = [System.Windows.Forms.Timer]::new()
+    $pollTimer.Interval = 250
+    $pollTimer.Add_Tick({
+        try {
+            if (Test-Path -LiteralPath $Script:WorkerProgressPath) {
+                $lines = @(Get-Content -LiteralPath $Script:WorkerProgressPath -Encoding UTF8 -ErrorAction SilentlyContinue)
+                while ($Script:WorkerProgressLine -lt $lines.Count) {
+                    $line = $lines[$Script:WorkerProgressLine]
+                    $Script:WorkerProgressLine++
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    try {
+                        $entry = $line | ConvertFrom-Json
+                        Set-TestJobProgress ([int]$entry.Percent) ([string]$entry.Text)
+                    } catch { }
+                }
+            }
+            if (-not $Script:AutoSubmitRequested -and ((Get-Date) -ge $startTime.AddMinutes(5)) -and (& $intakeIsBlank)) {
+                $Script:AutoSubmitRequested = $true
+                if ($Script:DiagnosisResult) {
+                    & $finalizeReport
+                    return
+                }
+            }
+            if ($Script:WorkerProcess -and $Script:WorkerProcess.HasExited) {
+                $pollTimer.Stop()
+                if (Test-Path -LiteralPath $Script:WorkerResultPath) {
+                    $Script:DiagnosisResult = Import-Clixml -LiteralPath $Script:WorkerResultPath
+                    Set-TestJobProgress 100 "Diagnose gereed - controleer gegevens en open rapport"
+                    $Script:OpenReportButton.Text = "Open rapport"
+                    $Script:OpenReportButton.Enabled = $true
+                    $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(31, 161, 143)
+                    $Script:OpenReportButton.ForeColor = [System.Drawing.Color]::White
+                    $Script:OpenReportButton.FlatAppearance.BorderColor = [System.Drawing.Color]::White
+                    if ($Script:AutoSubmitRequested -and (& $intakeIsBlank)) {
+                        & $finalizeReport
+                        return
+                    }
+                } else {
+                    Set-TestJobProgress 100 "Diagnose kon niet worden afgerond"
+                    $Script:OpenReportButton.Text = "Geen rapport beschikbaar"
+                }
+            }
+        } catch { }
+    })
+
+    $form.Add_Shown({
+        Set-TestJobProgress 2 "Test-Job diagnose starten"
+        if (-not $Script:ScriptPath -or -not (Test-Path -LiteralPath $Script:ScriptPath)) {
+            Set-TestJobProgress 100 "Geen scriptpad beschikbaar voor achtergrondrun"
+            $Script:OpenReportButton.Text = "Geen rapport beschikbaar"
+            return
+        }
+        $oldHidden = $env:TESTJOB_HIDDEN
+        $oldWorker = $env:TESTJOB_WORKER
+        $oldResult = $env:TESTJOB_RESULT_PATH
+        $oldProgress = $env:TESTJOB_PROGRESS_PATH
+        $oldOutput = $env:TESTJOB_OUTPUT_DIR
+        try {
+            $env:TESTJOB_HIDDEN = "1"
+            $env:TESTJOB_WORKER = "1"
+            $env:TESTJOB_RESULT_PATH = $Script:WorkerResultPath
+            $env:TESTJOB_PROGRESS_PATH = $Script:WorkerProgressPath
+            $env:TESTJOB_OUTPUT_DIR = $Script:OutputDir
+            $Script:WorkerProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @("-STA", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $Script:ScriptPath) -WindowStyle Hidden -PassThru
+        } finally {
+            if ($null -eq $oldHidden) { Remove-Item Env:\TESTJOB_HIDDEN -ErrorAction SilentlyContinue } else { $env:TESTJOB_HIDDEN = $oldHidden }
+            if ($null -eq $oldWorker) { Remove-Item Env:\TESTJOB_WORKER -ErrorAction SilentlyContinue } else { $env:TESTJOB_WORKER = $oldWorker }
+            if ($null -eq $oldResult) { Remove-Item Env:\TESTJOB_RESULT_PATH -ErrorAction SilentlyContinue } else { $env:TESTJOB_RESULT_PATH = $oldResult }
+            if ($null -eq $oldProgress) { Remove-Item Env:\TESTJOB_PROGRESS_PATH -ErrorAction SilentlyContinue } else { $env:TESTJOB_PROGRESS_PATH = $oldProgress }
+            if ($null -eq $oldOutput) { Remove-Item Env:\TESTJOB_OUTPUT_DIR -ErrorAction SilentlyContinue } else { $env:TESTJOB_OUTPUT_DIR = $oldOutput }
+        }
+        $pollTimer.Start()
+    })
+
+    $form.Add_FormClosed({
+        try { if ($pollTimer) { $pollTimer.Stop(); $pollTimer.Dispose() } } catch { }
+        try { if ($Script:WorkerProcess -and -not $Script:WorkerProcess.HasExited) { $Script:WorkerProcess.Kill() } } catch { }
+        Remove-Item -LiteralPath $Script:WorkerResultPath,$Script:WorkerProgressPath -Force -ErrorAction SilentlyContinue
+    })
+
+    [System.Windows.Forms.Application]::Run($form)
+}
+
+if ($env:TESTJOB_WORKER -eq "1") {
+    try {
+        $data = Invoke-TestJobDiagnosis
+        if ($env:TESTJOB_RESULT_PATH) {
+            $data | Export-Clixml -LiteralPath $env:TESTJOB_RESULT_PATH -Encoding UTF8
+        }
+        exit 0
+    } catch {
+        try { Set-TestJobProgress 100 ("Diagnose fout: {0}" -f $_.Exception.Message) } catch { }
+        if ($env:TESTJOB_RESULT_PATH) {
+            [pscustomobject]@{
+                Timestamp = Get-Date
+                Naam = ""
+                Praktijk = ""
+                Ticketnummer = ""
+                Licentie = ""
+                ComputerName = $env:COMPUTERNAME
+                LoggedUser = "$env:USERDOMAIN\$env:USERNAME"
+                Os = [pscustomobject]@{ Full = "Niet beschikbaar"; Build = ""; Version = "" }
+                SystemModel = ""
+                Cpu = [pscustomobject]@{ Name = "Niet beschikbaar"; Cores = 0; Logical = 0; LaunchYear = $null }
+                Memory = [pscustomobject]@{ TotalGb = "?"; AvailableGb = "?"; Percent = "?" }
+                Disks = @()
+                Uptime = [pscustomobject]@{ Text = "-" }
+                FastBoot = $null
+                RebootPending = $null
+                ProxyEnabled = $null
+                WebView2 = [pscustomobject]@{ Installed = $false; Version = "" }
+                DotNet = ""
+                LastWindowsUpdate = ""
+                WindowsInstall = [pscustomobject]@{ Date = ""; Source = "onbekend" }
+                KbUpdates = @()
+                Antivirus = @()
+                SmartAppControl = [pscustomobject]@{ State = "Niet beschikbaar" }
+                ExquiseProcesses = @()
+                IasProcesses = @()
+                Adapters = @()
+                Gateway = ""
+                DnsServers = ""
+                Wan = [pscustomobject]@{ Ip = "Onbekend"; Isp = "Onbekend"; As = "" }
+                Network = [pscustomobject]@{ Extensive = @(); Basic = @(); Failures = @() }
+                Lan = [pscustomobject]@{ Subnet = ""; Total = 0; SonosCount = 0; SonosFound = $false; YealinkCount = 0; YealinkFound = $false; Devices = @() }
+                EventLogs = @()
+                ExquiseLogs = @()
+                AppChecks = @([pscustomobject]@{ Category = "Diagnose"; Status = "Fout"; Message = $_.Exception.Message; Level = "bad" })
+                Software = @()
+                Updates = @()
+                CollectionErrors = @([pscustomobject]@{ Name = "worker"; Message = $_.Exception.Message })
+                ClipboardOk = $false
+                ReportFileName = ""
+            } | Export-Clixml -LiteralPath $env:TESTJOB_RESULT_PATH -Encoding UTF8
+        }
+        exit 1
+    }
+}
+
+Start-TestJobProgressWindow
+
+
+
+
+
