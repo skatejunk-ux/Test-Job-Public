@@ -1869,7 +1869,7 @@ function Write-TestJobHtmlReport {
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($Data.Licentie) { $metaParts += "<span><strong>Licentie</strong> $(HtmlEncode $Data.Licentie)</span>" }
-    $metaHtml = if ($metaParts.Count) { $metaParts -join "<span class='meta-sep'> | </span>" } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
+    $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
     $domainTotal = $domainItems.Count
@@ -1970,9 +1970,7 @@ $clipboardBanner
       <h1>Test-Job Rapport</h1>
       <a class="action-link" href="https://www.speedtest.net/" target="_blank" rel="noopener noreferrer">Open Speedtest.net</a>
     </div>
-    <div class="subtitle">$generated - Rapport staat op het klembord voor plakken in TOPdesk</div>
-    <div class="report-meta">$metaHtml</div>
-    <div class="filename-line"><strong>Bestandsnaam</strong> $(HtmlEncode $reportFileName)</div>
+    <div class="report-meta">$metaHtml <span>$generated - Rapport staat op het klembord voor plakken in TOPdesk</span></div>
   </div>
 </div>
 
@@ -2648,4 +2646,5 @@ if ($env:TESTJOB_WORKER -eq "1") {
 }
 
 Start-TestJobProgressWindowV2
+
 
