@@ -1735,7 +1735,6 @@ function ExquiseLogCardsHtml {
     <div class="toolbar">
       <input id="$inputId" type="text" value="excpt" oninput="highlightLog('$preId','$inputId')" onkeydown="handleSearchKey(event,'$preId')" placeholder="Zoekterm in $(AttrEncode $source)">
       <button onclick="searchOrNextLog('$preId','$inputId')">Zoeken</button>
-      <span id="$($preId)Count" class="match-count">0 gevonden</span>
       <button onclick="jumpMatch('$preId',-1)">Vorige</button>
       <button onclick="jumpMatch('$preId',1)">Volgende</button>
       <button onclick="copyLog('$preId')">Kopieer log</button>
@@ -1905,7 +1904,6 @@ pre{white-space:pre-wrap;background:#080d13;border:1px solid #21262d;border-radi
 button{background:#182332;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;cursor:pointer}button:hover{border-color:var(--blue)}
 .action-link{display:inline-flex;align-items:center;justify-content:center;background:#182332;border:1px solid #3a4658;color:#dbe5ef;text-decoration:none;border-radius:999px;padding:8px 14px;font-weight:700;font-size:13px;transition:background .15s ease,border-color .15s ease,color .15s ease}.action-link:hover{background:#202d3d;border-color:#55657c;color:#fff}
 .match{background:#604500;color:#fff;padding:0 2px;border-radius:2px}.match-active{background:#2f81f7;color:#fff}
-.match-count{display:inline-flex;align-items:center;justify-content:center;color:#d7dde5;font-size:12px;min-width:96px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:#111821;font-weight:700;white-space:nowrap}
 .section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .section-meta{color:var(--muted);font-size:12px}
 .collapsible-body{display:none}
@@ -1933,14 +1931,6 @@ button{background:#182332;border:1px solid var(--line);color:var(--text);border-
 function copyLog(id){var t=document.getElementById(id).innerText;navigator.clipboard&&navigator.clipboard.writeText(t);}
 function toggleLog(id,btn){var pre=document.getElementById(id);var card=pre.closest('.log-card');var open=card.classList.toggle('log-expanded');if(btn){btn.textContent=open?'Sluit groot':'Vergroot log';}}
 function escapeRegExp(v){return v.replace(/[.*+?^`$`{}()|[\]\\]/g,'\\$&');}
-function getMatchCounter(preId){return document.getElementById(preId+'Count');}
-function updateMatchCounter(preId){
-  var pre=document.getElementById(preId);
-  var counter=getMatchCounter(preId);
-  if(!pre||!counter){return;}
-  var matches=pre.querySelectorAll('mark.match');
-  counter.textContent=matches.length+' gevonden';
-}
 function setActiveMatch(preId,idx,behavior){
   var pre=document.getElementById(preId);
   if(!pre){return;}
@@ -1948,7 +1938,6 @@ function setActiveMatch(preId,idx,behavior){
   matches.forEach(function(m){m.classList.remove('match-active');});
   if(!matches.length){
     pre.dataset.matchIndex='-1';
-    updateMatchCounter(preId);
     return;
   }
   if(idx>=matches.length){idx=0;}
@@ -1956,7 +1945,6 @@ function setActiveMatch(preId,idx,behavior){
   pre.dataset.matchIndex=idx;
   matches[idx].classList.add('match-active');
   matches[idx].scrollIntoView({block:'center',behavior:behavior||'smooth'});
-  updateMatchCounter(preId);
 }
 function highlightLog(preId,inputId){
   var pre=document.getElementById(preId);
@@ -1968,14 +1956,13 @@ function highlightLog(preId,inputId){
   pre.dataset.matchIndex='-1';
   if(!q){
     pre.innerHTML=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    updateMatchCounter(preId);
     return;
   }
   var esc=escapeRegExp(q);
   var html=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   pre.innerHTML=html.replace(new RegExp(esc,'gi'),function(m){return '<mark class=\"match\">'+m+'</mark>';});
   var matches=pre.querySelectorAll('mark.match');
-  if(matches.length){setActiveMatch(preId,0,'smooth');}else{updateMatchCounter(preId);}
+  if(matches.length){setActiveMatch(preId,0,'smooth');}
 }
 function searchOrNextLog(preId,inputId){
   var pre=document.getElementById(preId);
@@ -1992,7 +1979,7 @@ function searchOrNextLog(preId,inputId){
 function jumpMatch(preId,dir){
   var pre=document.getElementById(preId);
   var matches=pre.querySelectorAll('mark.match');
-  if(!matches.length){updateMatchCounter(preId);return;}
+  if(!matches.length){return;}
   var idx=parseInt(pre.dataset.matchIndex||'-1',10);
   idx=idx+dir;
   setActiveMatch(preId,idx,'smooth');
@@ -2160,9 +2147,8 @@ $clipboardBanner
       <button onclick="toggleLog('events',this)">Vergroot log</button>
     </div>
     <div class="toolbar">
-      <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
+      <input id="eventsSearch" type="text" value="excpt" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
       <button onclick="searchOrNextLog('events','eventsSearch')">Zoeken</button>
-      <span id="eventsCount" class="match-count">0 gevonden</span>
       <button onclick="jumpMatch('events',-1)">Vorige</button>
       <button onclick="jumpMatch('events',1)">Volgende</button>
       <button onclick="copyLog('events')">Kopieer log</button>
@@ -2174,13 +2160,6 @@ $exquiseLogCards
 
 </div>
 </div>
-<script>
-highlightLog('events','eventsSearch');
-document.querySelectorAll('pre[id^="exqlogs"]').forEach(function(pre){
-  var input=document.getElementById('exqlogsSearch'+pre.id.replace('exqlogs',''));
-  if(input){highlightLog(pre.id,input.id);}
-});
-</script>
 </body>
 </html>
 "@
@@ -2535,13 +2514,23 @@ function Start-TestJobProgressWindowV2 {
     $Script:DiagnosisResult = $null
     $Script:WorkerProcess = $null
     $Script:WorkerProgressLine = 0
+    $Script:AutoSubmitRequested = $false
+    $Script:AutoSubmitExecuted = $false
     $Script:WorkerResultPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_result_{0}.xml" -f ([guid]::NewGuid().ToString("N")))
     $Script:WorkerProgressPath = Join-Path ([System.IO.Path]::GetTempPath()) ("TestJob_progress_{0}.jsonl" -f ([guid]::NewGuid().ToString("N")))
     Remove-Item -LiteralPath $Script:WorkerResultPath,$Script:WorkerProgressPath -Force -ErrorAction SilentlyContinue
 
-    $openButton.Add_Click({
-        if (-not $Script:DiagnosisResult) { return }
+    $startTime = Get-Date
+    $intakeIsBlank = {
+        return [string]::IsNullOrWhiteSpace($Script:IntakeNaam.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakePraktijk.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakeTicket.Text) -and
+            [string]::IsNullOrWhiteSpace($Script:IntakeLicentie.Text)
+    }
+    $finalizeReport = {
+        if ($Script:AutoSubmitExecuted -or -not $Script:DiagnosisResult) { return }
         try {
+            $Script:AutoSubmitExecuted = $true
             $Script:OpenReportButton.Enabled = $false
             $Script:OpenReportButton.Text = "Rapport openen..."
             $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(32, 44, 58)
@@ -2562,10 +2551,15 @@ function Start-TestJobProgressWindowV2 {
             Start-Process -FilePath $reportPath
             $form.Close()
         } catch {
+            $Script:AutoSubmitExecuted = $false
             Set-TestJobProgress 100 ("Rapport kon niet worden geopend: {0}" -f $_.Exception.Message)
             $Script:OpenReportButton.Text = "Open rapport"
             $Script:OpenReportButton.Enabled = $true
         }
+    }
+
+    $openButton.Add_Click({
+        & $finalizeReport
     })
 
     $pollTimer = [System.Windows.Forms.Timer]::new()
@@ -2584,6 +2578,13 @@ function Start-TestJobProgressWindowV2 {
                     } catch { }
                 }
             }
+            if (-not $Script:AutoSubmitRequested -and ((Get-Date) -ge $startTime.AddMinutes(5)) -and (& $intakeIsBlank)) {
+                $Script:AutoSubmitRequested = $true
+                if ($Script:DiagnosisResult) {
+                    & $finalizeReport
+                    return
+                }
+            }
             if ($Script:WorkerProcess -and $Script:WorkerProcess.HasExited) {
                 $pollTimer.Stop()
                 if (Test-Path -LiteralPath $Script:WorkerResultPath) {
@@ -2594,6 +2595,10 @@ function Start-TestJobProgressWindowV2 {
                     $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(31, 161, 143)
                     $Script:OpenReportButton.ForeColor = [System.Drawing.Color]::White
                     $Script:OpenReportButton.FlatAppearance.BorderColor = [System.Drawing.Color]::White
+                    if ($Script:AutoSubmitRequested -and (& $intakeIsBlank)) {
+                        & $finalizeReport
+                        return
+                    }
                 } else {
                     Set-TestJobProgress 100 "Diagnose kon niet worden afgerond"
                     $Script:OpenReportButton.Text = "Geen rapport beschikbaar"
