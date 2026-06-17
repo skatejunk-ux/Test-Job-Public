@@ -1486,8 +1486,7 @@ function Get-EventLogRows {
 
 function Get-ExquiseLogs {
     $cutoff = (Get-Date).AddDays(-7)
-    $today = (Get-Date).Date
-    $maxSize = 1MB
+    $maxSize = 5MB
     $sources = New-Object System.Collections.Generic.List[object]
 
     function Add-LogFiles {
@@ -1500,7 +1499,7 @@ function Get-ExquiseLogs {
         if ([string]::IsNullOrWhiteSpace($Path)) { return }
         $files = Get-ChildItem -Path $Path -Filter $Filter -File -Recurse:$Recurse -ErrorAction SilentlyContinue |
             Where-Object {
-                $_.LastWriteTime -ge $cutoff -and ($_.LastWriteTime.Date -eq $today -or $_.Length -le $maxSize)
+                $_.LastWriteTime -ge $cutoff -and $_.Length -le $maxSize
             }
         foreach ($file in $files) {
             $content = ""
@@ -1527,7 +1526,7 @@ function Get-ExquiseLogs {
         $repair = Join-Path $env:APPDATA "Exquise\Exquise RepairTool\Logs\RepairToolLog.txt"
         if (Test-Path $repair) {
             $file = Get-Item $repair
-            if ($file.LastWriteTime -ge $cutoff -and ($file.LastWriteTime.Date -eq $today -or $file.Length -le $maxSize)) {
+            if ($file.LastWriteTime -ge $cutoff -and $file.Length -le $maxSize) {
                 $content = Get-Content -Path $file.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
                 [void]$sources.Add([pscustomobject]@{
                     Source = "RepairToolLog"
@@ -1734,10 +1733,11 @@ function ExquiseLogCardsHtml {
       <button onclick="toggleLog('$preId',this)">Vergroot log</button>
     </div>
     <div class="toolbar">
-      <input id="$inputId" type="text" value="excpt" oninput="highlightLog('$preId','$inputId')" placeholder="Zoekterm in $(AttrEncode $source)">
+      <input id="$inputId" type="text" value="excpt" oninput="highlightLog('$preId','$inputId')" onkeydown="handleSearchKey(event,'$preId')" placeholder="Zoekterm in $(AttrEncode $source)">
       <button onclick="highlightLog('$preId','$inputId')">Zoeken</button>
       <button onclick="jumpMatch('$preId',-1)">Vorige</button>
       <button onclick="jumpMatch('$preId',1)">Volgende</button>
+      <span id="$($preId)Count" class="match-count">0/0</span>
       <button onclick="copyLog('$preId')">Kopieer log</button>
     </div>
     <pre id="$preId">$escaped</pre>
@@ -1904,7 +1904,8 @@ pre{white-space:pre-wrap;background:#080d13;border:1px solid #21262d;border-radi
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}.toolbar input{background:#0b1117;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;min-width:220px}
 button{background:#182332;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;cursor:pointer}button:hover{border-color:var(--blue)}
 .action-link{display:inline-flex;align-items:center;justify-content:center;background:#182332;border:1px solid #3a4658;color:#dbe5ef;text-decoration:none;border-radius:999px;padding:8px 14px;font-weight:700;font-size:13px;transition:background .15s ease,border-color .15s ease,color .15s ease}.action-link:hover{background:#202d3d;border-color:#55657c;color:#fff}
-.match{background:#604500;color:#fff;padding:0 2px;border-radius:2px}
+.match{background:#604500;color:#fff;padding:0 2px;border-radius:2px}.match-active{background:#2f81f7;color:#fff}
+.match-count{display:inline-flex;align-items:center;color:var(--muted);font-size:12px;min-width:44px}
 .section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .section-meta{color:var(--muted);font-size:12px}
 .collapsible-body{display:none}
@@ -1932,27 +1933,64 @@ button{background:#182332;border:1px solid var(--line);color:var(--text);border-
 function copyLog(id){var t=document.getElementById(id).innerText;navigator.clipboard&&navigator.clipboard.writeText(t);}
 function toggleLog(id,btn){var pre=document.getElementById(id);var card=pre.closest('.log-card');var open=card.classList.toggle('log-expanded');if(btn){btn.textContent=open?'Sluit groot':'Vergroot log';}}
 function escapeRegExp(v){return v.replace(/[.*+?^`$`{}()|[\]\\]/g,'\\$&');}
+function getMatchCounter(preId){return document.getElementById(preId+'Count');}
+function updateMatchCounter(preId){
+  var pre=document.getElementById(preId);
+  var counter=getMatchCounter(preId);
+  if(!pre||!counter){return;}
+  var matches=pre.querySelectorAll('mark.match');
+  if(!matches.length){counter.textContent='0/0';return;}
+  var idx=parseInt(pre.dataset.matchIndex||'0',10);
+  if(isNaN(idx)||idx<0||idx>=matches.length){idx=0;}
+  counter.textContent=(idx+1)+'/'+matches.length;
+}
+function setActiveMatch(preId,idx,behavior){
+  var pre=document.getElementById(preId);
+  if(!pre){return;}
+  var matches=pre.querySelectorAll('mark.match');
+  matches.forEach(function(m){m.classList.remove('match-active');});
+  if(!matches.length){
+    pre.dataset.matchIndex='-1';
+    updateMatchCounter(preId);
+    return;
+  }
+  if(idx>=matches.length){idx=0;}
+  if(idx<0){idx=matches.length-1;}
+  pre.dataset.matchIndex=idx;
+  matches[idx].classList.add('match-active');
+  matches[idx].scrollIntoView({block:'center',behavior:behavior||'smooth'});
+  updateMatchCounter(preId);
+}
 function highlightLog(preId,inputId){
   var pre=document.getElementById(preId);
   var input=document.getElementById(inputId);
   if(!pre.dataset.raw){pre.dataset.raw=pre.textContent;}
   var raw=pre.dataset.raw;
   var q=input.value.trim();
-  if(!q){pre.innerHTML=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');return;}
+  pre.dataset.matchIndex='-1';
+  if(!q){
+    pre.innerHTML=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    updateMatchCounter(preId);
+    return;
+  }
   var esc=escapeRegExp(q);
   var html=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   pre.innerHTML=html.replace(new RegExp(esc,'gi'),function(m){return '<mark class=\"match\">'+m+'</mark>';});
+  var matches=pre.querySelectorAll('mark.match');
+  if(matches.length){setActiveMatch(preId,0,'smooth');}else{updateMatchCounter(preId);}
 }
 function jumpMatch(preId,dir){
   var pre=document.getElementById(preId);
   var matches=pre.querySelectorAll('mark.match');
-  if(!matches.length){return;}
+  if(!matches.length){updateMatchCounter(preId);return;}
   var idx=parseInt(pre.dataset.matchIndex||'-1',10);
   idx=idx+dir;
-  if(idx>=matches.length){idx=0;}
-  if(idx<0){idx=matches.length-1;}
-  pre.dataset.matchIndex=idx;
-  matches[idx].scrollIntoView({block:'center',behavior:'smooth'});
+  setActiveMatch(preId,idx,'smooth');
+}
+function handleSearchKey(evt,preId){
+  if(evt.key!=='Enter'){return;}
+  evt.preventDefault();
+  if(evt.shiftKey){jumpMatch(preId,-1);}else{jumpMatch(preId,1);}
 }
 function toggleSection(id,btn){
   var el=document.getElementById(id);
@@ -2110,10 +2148,11 @@ $clipboardBanner
       <button onclick="toggleLog('events',this)">Vergroot log</button>
     </div>
     <div class="toolbar">
-      <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" placeholder="Zoekterm in event log">
+      <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
       <button onclick="highlightLog('events','eventsSearch')">Zoeken</button>
       <button onclick="jumpMatch('events',-1)">Vorige</button>
       <button onclick="jumpMatch('events',1)">Volgende</button>
+      <span id="eventsCount" class="match-count">0/0</span>
       <button onclick="copyLog('events')">Kopieer log</button>
     </div>
     <pre id="events">$eventLogEscaped</pre>
@@ -2537,7 +2576,7 @@ function Start-TestJobProgressWindowV2 {
                 $pollTimer.Stop()
                 if (Test-Path -LiteralPath $Script:WorkerResultPath) {
                     $Script:DiagnosisResult = Import-Clixml -LiteralPath $Script:WorkerResultPath
-                    Set-TestJobProgress 84 "Diagnose gereed - controleer gegevens en open rapport"
+                    Set-TestJobProgress 100 "Diagnose gereed - controleer gegevens en open rapport"
                     $Script:OpenReportButton.Text = "Open rapport"
                     $Script:OpenReportButton.Enabled = $true
                     $Script:OpenReportButton.BackColor = [System.Drawing.Color]::FromArgb(31, 161, 143)
