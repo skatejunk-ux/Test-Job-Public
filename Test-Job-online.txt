@@ -2424,12 +2424,6 @@ function Start-TestJobProgressWindowV2 {
     $form.BackColor = [System.Drawing.Color]::FromArgb(18, 24, 32)
     $form.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
 
-    $accent = [System.Windows.Forms.Panel]::new()
-    $accent.BackColor = [System.Drawing.Color]::FromArgb(35, 134, 54)
-    $accent.Size = [System.Drawing.Size]::new(6, 642)
-    $accent.Location = [System.Drawing.Point]::new(18, 18)
-    [void]$form.Controls.Add($accent)
-
     $headerLogo = [System.Windows.Forms.PictureBox]::new()
     $headerLogo.Image = Get-TestJobLogoImage
     $headerLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
@@ -2446,21 +2440,13 @@ function Start-TestJobProgressWindowV2 {
     [void]$form.Controls.Add($title)
 
     $subtitle = [System.Windows.Forms.Label]::new()
-    $subtitle.Text = "Diagnose start direct. Vul de gegevens rustig in; het rapport opent pas via de knop."
+    $subtitle.Text = "Vul de gegevens rustig in; het rapport opent pas via de knop."
     $subtitle.Font = [System.Drawing.Font]::new("Segoe UI", 9)
     $subtitle.AutoSize = $false
     $subtitle.Size = [System.Drawing.Size]::new(430, 36)
     $subtitle.Location = [System.Drawing.Point]::new(106, 53)
     $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
     [void]$form.Controls.Add($subtitle)
-
-    $brand = [System.Windows.Forms.Label]::new()
-    $brand.Text = "VERTIMART"
-    $brand.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 9, [System.Drawing.FontStyle]::Bold)
-    $brand.AutoSize = $true
-    $brand.Location = [System.Drawing.Point]::new(544, 26)
-    $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
-    [void]$form.Controls.Add($brand)
 
     $intakeTop = 96
 
@@ -2613,7 +2599,7 @@ function Start-TestJobProgressWindowV2 {
     [void]$form.Controls.Add($log)
 
     $hint = [System.Windows.Forms.Label]::new()
-    $hint.Text = "Het rapport wordt pas geschreven, gekopieerd en geopend wanneer u op Open rapport klikt."
+    $hint.Text = "Het rapport staat na openen op het klembord, plak dit in TOPdesk met CTRL+V"
     $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8)
     $hint.AutoSize = $false
     $hint.Size = [System.Drawing.Size]::new(360, 38)
@@ -2632,16 +2618,6 @@ function Start-TestJobProgressWindowV2 {
     $openButton.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
     $openButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(48, 58, 72)
     [void]$form.Controls.Add($openButton)
-
-    $footer = [System.Windows.Forms.Label]::new()
-    $footer.Text = "(C) Vertimart - Test-Job standalone diagnose"
-    $footer.Font = [System.Drawing.Font]::new("Segoe UI", 8)
-    $footer.AutoSize = $false
-    $footer.TextAlign = "MiddleRight"
-    $footer.Size = [System.Drawing.Size]::new(560, 22)
-    $footer.Location = [System.Drawing.Point]::new(40, 626)
-    $footer.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
-    [void]$form.Controls.Add($footer)
 
     $Script:ProgressForm = $form
     $Script:ProgressBar = $bar
