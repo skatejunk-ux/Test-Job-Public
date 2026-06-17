@@ -146,6 +146,8 @@ if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocatio
 
 $Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
+$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
+$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
 } elseif ($MyInvocation.MyCommand.Definition) {
@@ -186,6 +188,81 @@ $Script:YealinkOuis = @(
 )
 
 Set-Location -Path $Script:OutputDir
+
+function Get-TestJobBatUpdateState {
+    if ($Script:BatUpdateState) { return $Script:BatUpdateState }
+    $state = [pscustomobject]@{
+        UpdateAvailable = ($env:TESTJOB_BAT_UPDATE_AVAILABLE -eq "1")
+        SelfBatPath = if ($env:TESTJOB_SELF_BAT) { $env:TESTJOB_SELF_BAT } else { "" }
+        CacheDir = if ($env:TESTJOB_CACHE_DIR) { $env:TESTJOB_CACHE_DIR } else { (Join-Path ([System.IO.Path]::GetTempPath()) "TestJob") }
+    }
+    if ($state.UpdateAvailable) {
+        $Script:BatUpdateState = $state
+        return $state
+    }
+    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) {
+        $Script:BatUpdateState = $state
+        return $state
+    }
+    try {
+        $localVersion = ""
+        $versionLine = Select-String -LiteralPath $state.SelfBatPath -Pattern 'TESTJOB_BAT_VERSION=' -SimpleMatch -ErrorAction Stop | Select-Object -First 1
+        if ($versionLine) {
+            $localVersion = (($versionLine.Line -split 'TESTJOB_BAT_VERSION=')[1]).Trim('"')
+        }
+        if ([string]::IsNullOrWhiteSpace($localVersion)) {
+            $Script:BatUpdateState = $state
+            return $state
+        }
+        $remoteVersion = ((Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatVersionUrl -ErrorAction Stop).Content | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($remoteVersion) -or $remoteVersion -le $localVersion) {
+            $Script:BatUpdateState = $state
+            return $state
+        }
+        if (-not (Test-Path -LiteralPath $state.CacheDir)) {
+            [void](New-Item -ItemType Directory -Path $state.CacheDir -Force)
+        }
+        $nextBat = Join-Path $state.CacheDir "Test-Job-next.bat"
+        $nextVer = Join-Path $state.CacheDir "Test-Job-next.version.txt"
+        $nextFlag = Join-Path $state.CacheDir "Test-Job-next.ready"
+        $nextHelper = Join-Path $state.CacheDir "Test-Job-next-update.cmd"
+        $batContent = [string](Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatUrl -ErrorAction Stop).Content
+        if ($batContent -notmatch 'TESTJOB_BAT_VERSION=' -or $batContent -notmatch '::PowerShell_Start') {
+            $Script:BatUpdateState = $state
+            return $state
+        }
+        if ($batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))) {
+            $Script:BatUpdateState = $state
+            return $state
+        }
+        Set-Content -LiteralPath $nextBat -Value $batContent -Encoding ASCII
+        Set-Content -LiteralPath $nextVer -Value $remoteVersion -Encoding ASCII
+        Set-Content -LiteralPath $nextFlag -Value "ready" -Encoding ASCII
+        $state.UpdateAvailable = $true
+        $state.NextBatPath = $nextBat
+        $state.NextVersionPath = $nextVer
+        $state.NextFlagPath = $nextFlag
+        $state.HelperPath = $nextHelper
+    } catch {}
+    $Script:BatUpdateState = $state
+    return $state
+}
+
+function Start-TestJobBatReplacement {
+    $state = Get-TestJobBatUpdateState
+    if (-not $state.UpdateAvailable) { return }
+    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) { return }
+    if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
+    try {
+        @"
+@echo off
+ping 127.0.0.1 -n 4 >nul
+copy /y "$($state.NextBatPath)" "$($state.SelfBatPath)" >nul 2>nul
+del /q "$($state.NextBatPath)" "$($state.NextVersionPath)" "$($state.NextFlagPath)" "$($state.HelperPath)" >nul 2>nul
+"@ | Set-Content -LiteralPath $state.HelperPath -Encoding ASCII
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c","`"$($state.HelperPath)`"" -WindowStyle Hidden | Out-Null
+    } catch {}
+}
 
 function Get-TestJobLogoImage {
     if ($Script:TestJobLogoImage) { return $Script:TestJobLogoImage }
@@ -2471,8 +2548,9 @@ function Start-TestJobProgressWindowV2 {
     $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
     [void]$form.Controls.Add($brand)
 
+    $batUpdateState = Get-TestJobBatUpdateState
     $intakeTop = 96
-    if ($env:TESTJOB_BAT_UPDATE_AVAILABLE -eq "1") {
+    if ($batUpdateState.UpdateAvailable) {
         $updateNotice = [System.Windows.Forms.Label]::new()
         $updateNotice.Text = "Update beschikbaar, download de nieuwe versie van Filemail."
         $updateNotice.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
@@ -2698,6 +2776,7 @@ function Start-TestJobProgressWindowV2 {
             $Script:DiagnosisResult.ClipboardOk = Copy-FileToClipboard $reportPath
             Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
             Set-TestJobProgress 100 "Rapport openen"
+            Start-TestJobBatReplacement
             Start-Process -FilePath $reportPath
             $form.Close()
         } catch {
