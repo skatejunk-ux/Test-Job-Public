@@ -1,3 +1,140 @@
+@echo off
+setlocal EnableExtensions
+
+title Test-Job Direct
+set "TESTJOB_BAT_VERSION=$batVersion"
+set "TESTJOB_SELF_BAT=%~f0"
+set "TESTJOB_OUTPUT_DIR=%~dp0"
+set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
+set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
+set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt"
+set "TESTJOB_DEFAULT_REMOTE_BAT_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
+set "TESTJOB_DEFAULT_REMOTE_BAT_VERSION_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
+set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
+set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
+set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
+set "TESTJOB_EMBEDDED_PS1=%TESTJOB_CACHE_DIR%\Test-Job-embedded.ps1"
+set "TESTJOB_REMOTE_BAT=%TESTJOB_CACHE_DIR%\Test-Job-next.bat"
+set "TESTJOB_REMOTE_BAT_VERSION=%TESTJOB_CACHE_DIR%\Test-Job-next.version.txt"
+set "TESTJOB_REMOTE_BAT_FLAG=%TESTJOB_CACHE_DIR%\Test-Job-next.ready"
+set "TESTJOB_REMOTE_BAT_HELPER=%TESTJOB_CACHE_DIR%\Test-Job-next-update.cmd"
+
+for /f "tokens=1 delims=:" %%i in ('findstr /n /c:"::PowerShell_Start" "%~f0"') do set "startLine=%%i"
+
+if not defined startLine (
+    echo FOUT: Startmarkering '::PowerShell_Start' niet gevonden.
+    echo.
+    pause > nul
+    exit /b 1
+)
+
+if /i not "%~1"=="__run_hidden" (
+    start "" /min powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','\"%~f0\" __run_hidden' -WindowStyle Hidden"
+    exit /b 0
+)
+
+set "TESTJOB_RUN_SOURCE=embedded"
+set "TESTJOB_REMOTE_URL=%TESTJOB_DEFAULT_REMOTE_URL%"
+set "TESTJOB_BAT_UPDATE_AVAILABLE="
+
+if exist "%TESTJOB_REMOTE_URL_FILE%" (
+    for /f "usebackq delims=" %%u in ("%TESTJOB_REMOTE_URL_FILE%") do (
+        if not "%%u"=="" set "TESTJOB_REMOTE_URL=%%u"
+    )
+)
+
+if not exist "%TESTJOB_CACHE_DIR%" mkdir "%TESTJOB_CACHE_DIR%"
+del /q "%TESTJOB_REMOTE_BAT%" "%TESTJOB_REMOTE_BAT_VERSION%" "%TESTJOB_REMOTE_BAT_FLAG%" "%TESTJOB_REMOTE_BAT_HELPER%" >nul 2>nul
+
+powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
+ "$ErrorActionPreference='Stop';" ^
+ "$dir=$env:TESTJOB_CACHE_DIR;" ^
+ "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
+ "$versionUrl=$env:TESTJOB_DEFAULT_REMOTE_BAT_VERSION_URL;" ^
+ "$batUrl=$env:TESTJOB_DEFAULT_REMOTE_BAT_URL;" ^
+ "$localVersion=[string]$env:TESTJOB_BAT_VERSION;" ^
+ "$flag=$env:TESTJOB_REMOTE_BAT_FLAG;" ^
+ "$batPath=$env:TESTJOB_REMOTE_BAT;" ^
+ "$verPath=$env:TESTJOB_REMOTE_BAT_VERSION;" ^
+ "$remoteVersion=((Invoke-WebRequest -UseBasicParsing -Uri $versionUrl).Content | Out-String).Trim();" ^
+ "if([string]::IsNullOrWhiteSpace($remoteVersion)){throw 'Lege BAT-versie';};" ^
+ "if($remoteVersion -gt $localVersion){" ^
+ "  $batContent=[string](Invoke-WebRequest -UseBasicParsing -Uri $batUrl).Content;" ^
+ "  if($batContent -notmatch 'TESTJOB_BAT_VERSION=' -or $batContent -notmatch '::PowerShell_Start'){throw 'Ongeldige BAT';};" ^
+ "  if($batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))){throw 'Versie mismatch';};" ^
+ "  Set-Content -LiteralPath $batPath -Value $batContent -Encoding ASCII;" ^
+ "  Set-Content -LiteralPath $verPath -Value $remoteVersion -Encoding ASCII;" ^
+ "  Set-Content -LiteralPath $flag -Value 'ready' -Encoding ASCII;" ^
+ "}"
+
+if "%ERRORLEVEL%"=="0" (
+    if exist "%TESTJOB_REMOTE_BAT_FLAG%" set "TESTJOB_BAT_UPDATE_AVAILABLE=1"
+)
+
+if defined TESTJOB_REMOTE_URL (
+    powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
+     "$ErrorActionPreference='Stop';" ^
+     "$dir=$env:TESTJOB_CACHE_DIR;" ^
+     "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
+     "$txt=$env:TESTJOB_REMOTE_TXT;" ^
+     "$out=$env:TESTJOB_REMOTE_PS1;" ^
+     "$meta=$env:TESTJOB_REMOTE_META;" ^
+     "Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue;" ^
+     "$response=Invoke-WebRequest -UseBasicParsing -Uri $env:TESTJOB_REMOTE_URL;" ^
+     "$content=[string]$response.Content;" ^
+     "Set-Content -LiteralPath $txt -Value $content -Encoding UTF8;" ^
+     "$responseMeta=[ordered]@{ ETag=[string]$response.Headers['ETag']; LastModified=[string]$response.Headers['Last-Modified']; DownloadedAt=(Get-Date).ToString('o') };" ^
+     "($responseMeta | ConvertTo-Json -Compress) | Set-Content -LiteralPath $meta -Encoding UTF8;" ^
+     "$parseErrors=$null;" ^
+     "[System.Management.Automation.Language.Parser]::ParseInput($content,[ref]$null,[ref]$parseErrors) > $null;" ^
+     "if($parseErrors){throw (($parseErrors | ForEach-Object Message) -join [Environment]::NewLine)};" ^
+     "Set-Content -LiteralPath $out -Value $content -Encoding ASCII"
+
+    if "%ERRORLEVEL%"=="0" (
+        set "TESTJOB_RUN_SOURCE=github"
+        powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%TESTJOB_REMOTE_PS1%"
+        set "PS_EXIT_CODE=%ERRORLEVEL%"
+    ) else (
+        if not exist "%TESTJOB_CACHE_DIR%" mkdir "%TESTJOB_CACHE_DIR%"
+        more +%startLine% "%~f0" > "%TESTJOB_EMBEDDED_PS1%"
+        set "TESTJOB_RUN_SOURCE=embedded"
+        powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%TESTJOB_EMBEDDED_PS1%"
+        set "PS_EXIT_CODE=%ERRORLEVEL%"
+    )
+) else (
+    if not exist "%TESTJOB_CACHE_DIR%" mkdir "%TESTJOB_CACHE_DIR%"
+    more +%startLine% "%~f0" > "%TESTJOB_EMBEDDED_PS1%"
+    set "TESTJOB_RUN_SOURCE=embedded"
+    powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%TESTJOB_EMBEDDED_PS1%"
+    set "PS_EXIT_CODE=%ERRORLEVEL%"
+)
+
+if "%PS_EXIT_CODE%"=="0" if defined TESTJOB_BAT_UPDATE_AVAILABLE if exist "%TESTJOB_REMOTE_BAT_FLAG%" (
+    > "%TESTJOB_REMOTE_BAT_HELPER%" (
+        echo @echo off
+        echo ping 127.0.0.1 -n 4 ^>nul
+        echo copy /y "%TESTJOB_REMOTE_BAT%" "%TESTJOB_SELF_BAT%" ^>nul 2^>nul
+        echo del /q "%TESTJOB_REMOTE_BAT%" "%TESTJOB_REMOTE_BAT_VERSION%" "%TESTJOB_REMOTE_BAT_FLAG%" "%TESTJOB_REMOTE_BAT_HELPER%" ^>nul 2^>nul
+    )
+    start "" /min cmd.exe /c "%TESTJOB_REMOTE_BAT_HELPER%"
+)
+
+if "%PS_EXIT_CODE%" neq "0" (
+    echo.
+    echo WAARSCHUWING: PowerShell is beeindigd met exit-code: %PS_EXIT_CODE%
+    echo Controleer de melding hierboven.
+    echo.
+    pause
+    exit /b %PS_EXIT_CODE%
+)
+
+exit /b 0
+
+REM ==============================================================================
+REM Hier eindigt het BATCH script. De PowerShell code hieronder is alleen data.
+REM ==============================================================================
+
+::PowerShell_Start
 $ErrorActionPreference = "Stop"
 
 if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocation.MyCommand.Path) {
