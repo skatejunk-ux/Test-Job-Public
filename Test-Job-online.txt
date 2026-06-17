@@ -1735,9 +1735,9 @@ function ExquiseLogCardsHtml {
     <div class="toolbar">
       <input id="$inputId" type="text" value="excpt" oninput="highlightLog('$preId','$inputId')" onkeydown="handleSearchKey(event,'$preId')" placeholder="Zoekterm in $(AttrEncode $source)">
       <button onclick="highlightLog('$preId','$inputId')">Zoeken</button>
+      <span id="$($preId)Count" class="match-count">(0)</span>
       <button onclick="jumpMatch('$preId',-1)">Vorige</button>
       <button onclick="jumpMatch('$preId',1)">Volgende</button>
-      <span id="$($preId)Count" class="match-count">0/0</span>
       <button onclick="copyLog('$preId')">Kopieer log</button>
     </div>
     <pre id="$preId">$escaped</pre>
@@ -1905,7 +1905,7 @@ pre{white-space:pre-wrap;background:#080d13;border:1px solid #21262d;border-radi
 button{background:#182332;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 10px;cursor:pointer}button:hover{border-color:var(--blue)}
 .action-link{display:inline-flex;align-items:center;justify-content:center;background:#182332;border:1px solid #3a4658;color:#dbe5ef;text-decoration:none;border-radius:999px;padding:8px 14px;font-weight:700;font-size:13px;transition:background .15s ease,border-color .15s ease,color .15s ease}.action-link:hover{background:#202d3d;border-color:#55657c;color:#fff}
 .match{background:#604500;color:#fff;padding:0 2px;border-radius:2px}.match-active{background:#2f81f7;color:#fff}
-.match-count{display:inline-flex;align-items:center;color:var(--muted);font-size:12px;min-width:44px}
+.match-count{display:inline-flex;align-items:center;justify-content:center;color:#d7dde5;font-size:12px;min-width:40px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:#111821;font-weight:700}
 .section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
 .section-meta{color:var(--muted);font-size:12px}
 .collapsible-body{display:none}
@@ -1939,10 +1939,7 @@ function updateMatchCounter(preId){
   var counter=getMatchCounter(preId);
   if(!pre||!counter){return;}
   var matches=pre.querySelectorAll('mark.match');
-  if(!matches.length){counter.textContent='0/0';return;}
-  var idx=parseInt(pre.dataset.matchIndex||'0',10);
-  if(isNaN(idx)||idx<0||idx>=matches.length){idx=0;}
-  counter.textContent=(idx+1)+'/'+matches.length;
+  counter.textContent='('+matches.length+')';
 }
 function setActiveMatch(preId,idx,behavior){
   var pre=document.getElementById(preId);
@@ -1990,7 +1987,9 @@ function jumpMatch(preId,dir){
 function handleSearchKey(evt,preId){
   if(evt.key!=='Enter'){return;}
   evt.preventDefault();
-  if(evt.shiftKey){jumpMatch(preId,-1);}else{jumpMatch(preId,1);}
+  var inputId=preId==='events'?'eventsSearch':'exqlogsSearch'+preId.replace('exqlogs','');
+  if(document.getElementById(inputId)){highlightLog(preId,inputId);}
+  if(evt.shiftKey){jumpMatch(preId,-1);}
 }
 function toggleSection(id,btn){
   var el=document.getElementById(id);
@@ -2150,9 +2149,9 @@ $clipboardBanner
     <div class="toolbar">
       <input id="eventsSearch" type="text" value="exquise" oninput="highlightLog('events','eventsSearch')" onkeydown="handleSearchKey(event,'events')" placeholder="Zoekterm in event log">
       <button onclick="highlightLog('events','eventsSearch')">Zoeken</button>
+      <span id="eventsCount" class="match-count">(0)</span>
       <button onclick="jumpMatch('events',-1)">Vorige</button>
       <button onclick="jumpMatch('events',1)">Volgende</button>
-      <span id="eventsCount" class="match-count">0/0</span>
       <button onclick="copyLog('events')">Kopieer log</button>
     </div>
     <pre id="events">$eventLogEscaped</pre>
