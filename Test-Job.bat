@@ -2,22 +2,14 @@
 setlocal EnableExtensions
 
 title Test-Job Direct
-set "TESTJOB_BAT_VERSION=$batVersion"
-set "TESTJOB_SELF_BAT=%~f0"
 set "TESTJOB_OUTPUT_DIR=%~dp0"
 set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
 set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
 set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt"
-set "TESTJOB_DEFAULT_REMOTE_BAT_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
-set "TESTJOB_DEFAULT_REMOTE_BAT_VERSION_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
 set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
 set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
 set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
 set "TESTJOB_EMBEDDED_PS1=%TESTJOB_CACHE_DIR%\Test-Job-embedded.ps1"
-set "TESTJOB_REMOTE_BAT=%TESTJOB_CACHE_DIR%\Test-Job-next.bat"
-set "TESTJOB_REMOTE_BAT_VERSION=%TESTJOB_CACHE_DIR%\Test-Job-next.version.txt"
-set "TESTJOB_REMOTE_BAT_FLAG=%TESTJOB_CACHE_DIR%\Test-Job-next.ready"
-set "TESTJOB_REMOTE_BAT_HELPER=%TESTJOB_CACHE_DIR%\Test-Job-next-update.cmd"
 
 for /f "tokens=1 delims=:" %%i in ('findstr /n /c:"::PowerShell_Start" "%~f0"') do set "startLine=%%i"
 
@@ -35,40 +27,11 @@ if /i not "%~1"=="__run_hidden" (
 
 set "TESTJOB_RUN_SOURCE=embedded"
 set "TESTJOB_REMOTE_URL=%TESTJOB_DEFAULT_REMOTE_URL%"
-set "TESTJOB_BAT_UPDATE_AVAILABLE="
 
 if exist "%TESTJOB_REMOTE_URL_FILE%" (
     for /f "usebackq delims=" %%u in ("%TESTJOB_REMOTE_URL_FILE%") do (
         if not "%%u"=="" set "TESTJOB_REMOTE_URL=%%u"
     )
-)
-
-if not exist "%TESTJOB_CACHE_DIR%" mkdir "%TESTJOB_CACHE_DIR%"
-del /q "%TESTJOB_REMOTE_BAT%" "%TESTJOB_REMOTE_BAT_VERSION%" "%TESTJOB_REMOTE_BAT_FLAG%" "%TESTJOB_REMOTE_BAT_HELPER%" >nul 2>nul
-
-powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command ^
- "$ErrorActionPreference='Stop';" ^
- "$dir=$env:TESTJOB_CACHE_DIR;" ^
- "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
- "$versionUrl=$env:TESTJOB_DEFAULT_REMOTE_BAT_VERSION_URL;" ^
- "$batUrl=$env:TESTJOB_DEFAULT_REMOTE_BAT_URL;" ^
- "$localVersion=[string]$env:TESTJOB_BAT_VERSION;" ^
- "$flag=$env:TESTJOB_REMOTE_BAT_FLAG;" ^
- "$batPath=$env:TESTJOB_REMOTE_BAT;" ^
- "$verPath=$env:TESTJOB_REMOTE_BAT_VERSION;" ^
- "$remoteVersion=((Invoke-WebRequest -UseBasicParsing -Uri $versionUrl).Content | Out-String).Trim();" ^
- "if([string]::IsNullOrWhiteSpace($remoteVersion)){throw 'Lege BAT-versie';};" ^
- "if($remoteVersion -gt $localVersion){" ^
- "  $batContent=[string](Invoke-WebRequest -UseBasicParsing -Uri $batUrl).Content;" ^
- "  if($batContent -notmatch 'TESTJOB_BAT_VERSION=' -or $batContent -notmatch '::PowerShell_Start'){throw 'Ongeldige BAT';};" ^
- "  if($batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))){throw 'Versie mismatch';};" ^
- "  Set-Content -LiteralPath $batPath -Value $batContent -Encoding ASCII;" ^
- "  Set-Content -LiteralPath $verPath -Value $remoteVersion -Encoding ASCII;" ^
- "  Set-Content -LiteralPath $flag -Value 'ready' -Encoding ASCII;" ^
- "}"
-
-if "%ERRORLEVEL%"=="0" (
-    if exist "%TESTJOB_REMOTE_BAT_FLAG%" set "TESTJOB_BAT_UPDATE_AVAILABLE=1"
 )
 
 if defined TESTJOB_REMOTE_URL (
@@ -107,16 +70,6 @@ if defined TESTJOB_REMOTE_URL (
     set "TESTJOB_RUN_SOURCE=embedded"
     powershell.exe -STA -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%TESTJOB_EMBEDDED_PS1%"
     set "PS_EXIT_CODE=%ERRORLEVEL%"
-)
-
-if "%PS_EXIT_CODE%"=="0" if defined TESTJOB_BAT_UPDATE_AVAILABLE if exist "%TESTJOB_REMOTE_BAT_FLAG%" (
-    > "%TESTJOB_REMOTE_BAT_HELPER%" (
-        echo @echo off
-        echo ping 127.0.0.1 -n 4 ^>nul
-        echo copy /y "%TESTJOB_REMOTE_BAT%" "%TESTJOB_SELF_BAT%" ^>nul 2^>nul
-        echo del /q "%TESTJOB_REMOTE_BAT%" "%TESTJOB_REMOTE_BAT_VERSION%" "%TESTJOB_REMOTE_BAT_FLAG%" "%TESTJOB_REMOTE_BAT_HELPER%" ^>nul 2^>nul
-    )
-    start "" /min cmd.exe /c "%TESTJOB_REMOTE_BAT_HELPER%"
 )
 
 if "%PS_EXIT_CODE%" neq "0" (
@@ -188,143 +141,6 @@ $Script:YealinkOuis = @(
 )
 
 Set-Location -Path $Script:OutputDir
-
-function Resolve-TestJobLauncherBatPath {
-    if ($env:TESTJOB_SELF_BAT -and (Test-Path -LiteralPath $env:TESTJOB_SELF_BAT)) {
-        return $env:TESTJOB_SELF_BAT
-    }
-
-    $candidates = @()
-    if ($Script:OutputDir) {
-        $candidates += (Join-Path $Script:OutputDir "Test-Job.bat")
-    }
-    $candidates += (Join-Path (Get-Location).Path "Test-Job.bat")
-
-    foreach ($candidate in ($candidates | Select-Object -Unique)) {
-        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-            return $candidate
-        }
-    }
-
-    try {
-        $selfPid = $PID
-        $seen = New-Object System.Collections.Generic.HashSet[int]
-        while ($selfPid -and -not $seen.Contains($selfPid)) {
-            [void]$seen.Add($selfPid)
-            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $selfPid" -ErrorAction Stop
-            if (-not $proc) { break }
-            $cmd = [string]$proc.CommandLine
-            if ($cmd -match '([A-Za-z]:\\[^"]*Test-Job\.bat)') {
-                $batPath = $Matches[1]
-                if (Test-Path -LiteralPath $batPath) { return $batPath }
-            }
-            $selfPid = [int]$proc.ParentProcessId
-        }
-    } catch {}
-
-    return ""
-}
-
-function Get-TestJobBatUpdateState {
-    if ($Script:BatUpdateState) { return $Script:BatUpdateState }
-    $state = [pscustomobject]@{
-        UpdateAvailable = ($env:TESTJOB_BAT_UPDATE_AVAILABLE -eq "1")
-        SelfBatPath = (Resolve-TestJobLauncherBatPath)
-        CacheDir = if ($env:TESTJOB_CACHE_DIR) { $env:TESTJOB_CACHE_DIR } else { (Join-Path ([System.IO.Path]::GetTempPath()) "TestJob") }
-        LegacyBat = $false
-    }
-    if ($state.UpdateAvailable) {
-        $Script:BatUpdateState = $state
-        return $state
-    }
-    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) {
-        $Script:BatUpdateState = $state
-        return $state
-    }
-    try {
-        $localVersion = "0"
-        $versionLine = Select-String -LiteralPath $state.SelfBatPath -Pattern 'TESTJOB_BAT_VERSION=' -SimpleMatch -ErrorAction Stop | Select-Object -First 1
-        if ($versionLine) {
-            $localVersion = (($versionLine.Line -split 'TESTJOB_BAT_VERSION=')[1]).Trim('"')
-        } else {
-            $state.LegacyBat = $true
-            $state.UpdateAvailable = $true
-        }
-        $remoteVersion = ""
-        try {
-            $remoteVersion = ((Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatVersionUrl -ErrorAction Stop).Content | Out-String).Trim()
-        } catch {
-            if (-not $state.LegacyBat) {
-                throw
-            }
-        }
-        if (-not $state.LegacyBat) {
-            if ([string]::IsNullOrWhiteSpace($remoteVersion) -or $remoteVersion -le $localVersion) {
-                $Script:BatUpdateState = $state
-                return $state
-            }
-        }
-        if (-not (Test-Path -LiteralPath $state.CacheDir)) {
-            [void](New-Item -ItemType Directory -Path $state.CacheDir -Force)
-        }
-        $nextBat = Join-Path $state.CacheDir "Test-Job-next.bat"
-        $nextVer = Join-Path $state.CacheDir "Test-Job-next.version.txt"
-        $nextFlag = Join-Path $state.CacheDir "Test-Job-next.ready"
-        $nextHelper = Join-Path $state.CacheDir "Test-Job-next-update.cmd"
-        $batContent = [string](Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatUrl -ErrorAction Stop).Content
-        if ($batContent -notmatch 'TESTJOB_BAT_VERSION=' -or $batContent -notmatch '::PowerShell_Start') {
-            $Script:BatUpdateState = $state
-            return $state
-        }
-        if (-not [string]::IsNullOrWhiteSpace($remoteVersion) -and $batContent -notmatch ('TESTJOB_BAT_VERSION=' + [regex]::Escape($remoteVersion))) {
-            $Script:BatUpdateState = $state
-            return $state
-        }
-        Set-Content -LiteralPath $nextBat -Value $batContent -Encoding ASCII
-        Set-Content -LiteralPath $nextVer -Value $remoteVersion -Encoding ASCII
-        Set-Content -LiteralPath $nextFlag -Value "ready" -Encoding ASCII
-        $state.UpdateAvailable = $true
-        $state.NextBatPath = $nextBat
-        $state.NextVersionPath = $nextVer
-        $state.NextFlagPath = $nextFlag
-        $state.HelperPath = $nextHelper
-    } catch {}
-    $Script:BatUpdateState = $state
-    return $state
-}
-
-function Start-TestJobBatReplacement {
-    $state = Get-TestJobBatUpdateState
-    try {
-        if (-not $state.UpdateAvailable) { return }
-        if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) { return }
-        if ([string]::IsNullOrWhiteSpace($state.NextFlagPath) -or
-            [string]::IsNullOrWhiteSpace($state.NextBatPath) -or
-            [string]::IsNullOrWhiteSpace($state.HelperPath)) { return }
-        if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
-        @"
-@echo off
-setlocal EnableExtensions
-set "SRC=$($state.NextBatPath)"
-set "DST=$($state.SelfBatPath)"
-set "VER=$($state.NextVersionPath)"
-set "FLAG=$($state.NextFlagPath)"
-set "SELF=$($state.HelperPath)"
-set /a TRYCOUNT=0
-:retry
-ping 127.0.0.1 -n 3 >nul
-copy /y "%SRC%" "%DST%" >nul 2>nul
-if not errorlevel 1 goto copied
-set /a TRYCOUNT+=1
-if %TRYCOUNT% LSS 20 goto retry
-goto end
-:copied
-del /q "%SRC%" "%VER%" "%FLAG%" "%SELF%" >nul 2>nul
-:end
-"@ | Set-Content -LiteralPath $state.HelperPath -Encoding ASCII
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c","`"$($state.HelperPath)`"" -WindowStyle Hidden | Out-Null
-    } catch {}
-}
 
 function Get-TestJobLogoImage {
     if ($Script:TestJobLogoImage) { return $Script:TestJobLogoImage }
@@ -2610,19 +2426,7 @@ function Start-TestJobProgressWindowV2 {
     $brand.ForeColor = [System.Drawing.Color]::FromArgb(63, 185, 80)
     [void]$form.Controls.Add($brand)
 
-    $batUpdateState = Get-TestJobBatUpdateState
     $intakeTop = 96
-    if ($batUpdateState.UpdateAvailable) {
-        $updateNotice = [System.Windows.Forms.Label]::new()
-        $updateNotice.Text = "Update beschikbaar: gebruik volgende keer de nieuwe van Filemail."
-        $updateNotice.Font = [System.Drawing.Font]::new("Segoe UI Semibold", 8.5, [System.Drawing.FontStyle]::Bold)
-        $updateNotice.AutoSize = $false
-        $updateNotice.Size = [System.Drawing.Size]::new(470, 18)
-        $updateNotice.Location = [System.Drawing.Point]::new(106, 82)
-        $updateNotice.ForeColor = [System.Drawing.Color]::FromArgb(244, 185, 66)
-        [void]$form.Controls.Add($updateNotice)
-        $intakeTop = 114
-    }
 
     $intakePanel = [System.Windows.Forms.Panel]::new()
     $intakePanel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
@@ -2838,7 +2642,6 @@ function Start-TestJobProgressWindowV2 {
             $Script:DiagnosisResult.ClipboardOk = Copy-FileToClipboard $reportPath
             Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
             Set-TestJobProgress 100 "Rapport openen"
-            try { Start-TestJobBatReplacement } catch { }
             Start-Process -FilePath $reportPath
             $form.Close()
         } catch {
