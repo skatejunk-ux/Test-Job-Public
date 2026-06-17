@@ -189,18 +189,48 @@ $Script:YealinkOuis = @(
 
 Set-Location -Path $Script:OutputDir
 
+function Resolve-TestJobLauncherBatPath {
+    if ($env:TESTJOB_SELF_BAT -and (Test-Path -LiteralPath $env:TESTJOB_SELF_BAT)) {
+        return $env:TESTJOB_SELF_BAT
+    }
+
+    $candidates = @()
+    if ($Script:OutputDir) {
+        $candidates += (Join-Path $Script:OutputDir "Test-Job.bat")
+    }
+    $candidates += (Join-Path (Get-Location).Path "Test-Job.bat")
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+
+    try {
+        $selfPid = $PID
+        $seen = New-Object System.Collections.Generic.HashSet[int]
+        while ($selfPid -and -not $seen.Contains($selfPid)) {
+            [void]$seen.Add($selfPid)
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $selfPid" -ErrorAction Stop
+            if (-not $proc) { break }
+            $cmd = [string]$proc.CommandLine
+            if ($cmd -match '([A-Za-z]:\\[^"]*Test-Job\.bat)') {
+                $batPath = $Matches[1]
+                if (Test-Path -LiteralPath $batPath) { return $batPath }
+            }
+            $selfPid = [int]$proc.ParentProcessId
+        }
+    } catch {}
+
+    return ""
+}
+
 function Get-TestJobBatUpdateState {
     if ($Script:BatUpdateState) { return $Script:BatUpdateState }
     $state = [pscustomobject]@{
         UpdateAvailable = ($env:TESTJOB_BAT_UPDATE_AVAILABLE -eq "1")
-        SelfBatPath = if ($env:TESTJOB_SELF_BAT) { $env:TESTJOB_SELF_BAT } else { "" }
+        SelfBatPath = (Resolve-TestJobLauncherBatPath)
         CacheDir = if ($env:TESTJOB_CACHE_DIR) { $env:TESTJOB_CACHE_DIR } else { (Join-Path ([System.IO.Path]::GetTempPath()) "TestJob") }
-    }
-    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath)) {
-        $fallbackBatPath = Join-Path $Script:OutputDir "Test-Job.bat"
-        if (Test-Path -LiteralPath $fallbackBatPath) {
-            $state.SelfBatPath = $fallbackBatPath
-        }
     }
     if ($state.UpdateAvailable) {
         $Script:BatUpdateState = $state
