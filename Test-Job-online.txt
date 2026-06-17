@@ -59,6 +59,12 @@ function Get-TestJobBatUpdateState {
         SelfBatPath = if ($env:TESTJOB_SELF_BAT) { $env:TESTJOB_SELF_BAT } else { "" }
         CacheDir = if ($env:TESTJOB_CACHE_DIR) { $env:TESTJOB_CACHE_DIR } else { (Join-Path ([System.IO.Path]::GetTempPath()) "TestJob") }
     }
+    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath)) {
+        $fallbackBatPath = Join-Path $Script:OutputDir "Test-Job.bat"
+        if (Test-Path -LiteralPath $fallbackBatPath) {
+            $state.SelfBatPath = $fallbackBatPath
+        }
+    }
     if ($state.UpdateAvailable) {
         $Script:BatUpdateState = $state
         return $state
@@ -68,14 +74,10 @@ function Get-TestJobBatUpdateState {
         return $state
     }
     try {
-        $localVersion = ""
+        $localVersion = "0"
         $versionLine = Select-String -LiteralPath $state.SelfBatPath -Pattern 'TESTJOB_BAT_VERSION=' -SimpleMatch -ErrorAction Stop | Select-Object -First 1
         if ($versionLine) {
             $localVersion = (($versionLine.Line -split 'TESTJOB_BAT_VERSION=')[1]).Trim('"')
-        }
-        if ([string]::IsNullOrWhiteSpace($localVersion)) {
-            $Script:BatUpdateState = $state
-            return $state
         }
         $remoteVersion = ((Invoke-WebRequest -UseBasicParsing -Uri $Script:DefaultRemoteBatVersionUrl -ErrorAction Stop).Content | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($remoteVersion) -or $remoteVersion -le $localVersion) {
