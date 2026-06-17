@@ -57,6 +57,26 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8
     return $Script:TestJobLogoImage
 }
 
+function Set-TextBoxCueBanner {
+    param(
+        [System.Windows.Forms.TextBox]$TextBox,
+        [string]$Text
+    )
+    if (-not $TextBox -or [string]::IsNullOrWhiteSpace($Text)) { return }
+    if (-not ("TestJobNativeMethods" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class TestJobNativeMethods {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+}
+"@
+    }
+    $EM_SETCUEBANNER = 0x1501
+    [void][TestJobNativeMethods]::SendMessage($TextBox.Handle, $EM_SETCUEBANNER, [IntPtr]::Zero, $Text)
+}
+
 function Start-TestJobProgressWindow {
     try {
         Add-Type -AssemblyName System.Windows.Forms
@@ -442,28 +462,8 @@ function Show-TestJobStartForm {
         $textbox.BackColor = [System.Drawing.Color]::FromArgb(17, 24, 33)
         $textbox.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
         $textbox.BorderStyle = "None"
-        $textbox.Tag = $Placeholder
         [void]$box.Controls.Add($textbox)
-
-        $placeholderLabel = [System.Windows.Forms.Label]::new()
-        $placeholderLabel.Text = $Placeholder
-        $placeholderLabel.Font = [System.Drawing.Font]::new("Segoe UI", 10)
-        $placeholderLabel.AutoSize = $false
-        $placeholderLabel.Size = [System.Drawing.Size]::new(296, 24)
-        $placeholderLabel.Location = [System.Drawing.Point]::new(48, 10)
-        $placeholderLabel.ForeColor = [System.Drawing.Color]::FromArgb(124, 133, 145)
-        $placeholderLabel.BackColor = [System.Drawing.Color]::Transparent
-        [void]$box.Controls.Add($placeholderLabel)
-        $placeholderLabel.BringToFront()
-
-        $syncPlaceholder = {
-            $placeholderLabel.Visible = [string]::IsNullOrWhiteSpace($textbox.Text)
-        }
-        $textbox.Add_TextChanged($syncPlaceholder)
-        $placeholderLabel.Add_Click({
-            $textbox.Focus()
-        })
-        & $syncPlaceholder
+        Set-TextBoxCueBanner -TextBox $textbox -Text $Placeholder
 
         return $textbox
     }
