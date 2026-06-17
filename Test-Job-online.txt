@@ -160,6 +160,9 @@ function Start-TestJobBatReplacement {
     $state = Get-TestJobBatUpdateState
     if (-not $state.UpdateAvailable) { return }
     if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) { return }
+    if ([string]::IsNullOrWhiteSpace($state.NextFlagPath) -or
+        [string]::IsNullOrWhiteSpace($state.NextBatPath) -or
+        [string]::IsNullOrWhiteSpace($state.HelperPath)) { return }
     if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
     try {
         @"
