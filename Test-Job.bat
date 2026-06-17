@@ -295,13 +295,13 @@ function Get-TestJobBatUpdateState {
 
 function Start-TestJobBatReplacement {
     $state = Get-TestJobBatUpdateState
-    if (-not $state.UpdateAvailable) { return }
-    if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) { return }
-    if ([string]::IsNullOrWhiteSpace($state.NextFlagPath) -or
-        [string]::IsNullOrWhiteSpace($state.NextBatPath) -or
-        [string]::IsNullOrWhiteSpace($state.HelperPath)) { return }
-    if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
     try {
+        if (-not $state.UpdateAvailable) { return }
+        if ([string]::IsNullOrWhiteSpace($state.SelfBatPath) -or -not (Test-Path -LiteralPath $state.SelfBatPath)) { return }
+        if ([string]::IsNullOrWhiteSpace($state.NextFlagPath) -or
+            [string]::IsNullOrWhiteSpace($state.NextBatPath) -or
+            [string]::IsNullOrWhiteSpace($state.HelperPath)) { return }
+        if (-not (Test-Path -LiteralPath $state.NextFlagPath) -or -not (Test-Path -LiteralPath $state.NextBatPath)) { return }
         @"
 @echo off
 ping 127.0.0.1 -n 4 >nul
@@ -2824,7 +2824,7 @@ function Start-TestJobProgressWindowV2 {
             $Script:DiagnosisResult.ClipboardOk = Copy-FileToClipboard $reportPath
             Write-TestJobHtmlReport -Data $Script:DiagnosisResult -Path $reportPath
             Set-TestJobProgress 100 "Rapport openen"
-            Start-TestJobBatReplacement
+            try { Start-TestJobBatReplacement } catch { }
             Start-Process -FilePath $reportPath
             $form.Close()
         } catch {
