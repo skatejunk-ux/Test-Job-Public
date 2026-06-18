@@ -358,7 +358,7 @@ function Get-ReportFileName {
         return 'Test-Job_Rapport.html'
     }
 
-    return ((($parts -join '_') + '_Test-Job_Rapport.html') -replace '_+', '_')
+    return (('Test-Job_Rapport_' + ($parts -join '_') + '.html') -replace '_+', '_')
 }
 
 function New-Status {
