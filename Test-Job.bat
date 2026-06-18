@@ -6,7 +6,7 @@ set "TESTJOB_BAT_VERSION=2026.06.18.1"
 set "TESTJOB_OUTPUT_DIR=%~dp0"
 set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
 set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
-set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt"
+set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-online.txt"
 set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
 set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
 set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
@@ -33,6 +33,10 @@ if exist "%TESTJOB_REMOTE_URL_FILE%" (
     for /f "usebackq delims=" %%u in ("%TESTJOB_REMOTE_URL_FILE%") do (
         if not "%%u"=="" set "TESTJOB_REMOTE_URL=%%u"
     )
+)
+
+if /i "%TESTJOB_REMOTE_URL%"=="https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt" (
+    set "TESTJOB_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-online.txt"
 )
 
 set "PS_EXIT_CODE=1"
@@ -107,8 +111,8 @@ $Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocatio
 $Script:TestJobPsVersion = "2026.06.18.1"
 $Script:TestJobBatVersion = if ($env:TESTJOB_BAT_VERSION) { $env:TESTJOB_BAT_VERSION } else { "directe-ps1" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
-$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
-$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
+$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job.bat"
+$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-bat-version.txt"
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
 } elseif ($MyInvocation.MyCommand.Definition) {

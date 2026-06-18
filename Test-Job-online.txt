@@ -12,8 +12,8 @@ $Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocatio
 $Script:TestJobPsVersion = "2026.06.18.1"
 $Script:TestJobBatVersion = if ($env:TESTJOB_BAT_VERSION) { $env:TESTJOB_BAT_VERSION } else { "directe-ps1" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
-$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
-$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
+$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job.bat"
+$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-bat-version.txt"
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
 } elseif ($MyInvocation.MyCommand.Definition) {
