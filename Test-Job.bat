@@ -63,7 +63,10 @@ powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -Command ^
  "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
  "$out=$env:TESTJOB_REMOTE_PS1;" ^
  "Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue;" ^
- "$response=Invoke-WebRequest -UseBasicParsing -Uri $env:TESTJOB_REMOTE_URL;" ^
+ "$requestUrl=$env:TESTJOB_REMOTE_URL;" ^
+ "if($requestUrl -match '\?'){ $requestUrl += '&' } else { $requestUrl += '?' };" ^
+ "$requestUrl += ('cb=' + [DateTime]::UtcNow.Ticks);" ^
+ "$response=Invoke-WebRequest -UseBasicParsing -Uri $requestUrl;" ^
  "$content=[string]$response.Content;" ^
  "if([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'TESTJOB_ONLINE_SENTINEL: TESTJOB_PS1_V1'){throw 'Ongeldige online payload'};" ^
  "Set-Content -LiteralPath $out -Value $content -Encoding ASCII;" ^
@@ -1713,7 +1716,6 @@ function Write-TestJobHtmlReport {
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($licenseHtml) { $metaParts += "<span><strong>Licentie</strong> $licenseHtml</span>" }
     $versionText = if ($Data.VersionDisplay) { $Data.VersionDisplay } else { Get-TestJobVersionDisplay }
-    if ($versionText) { $metaParts += "<span><strong>Versie</strong> $(HtmlEncode $versionText)</span>" }
     $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
@@ -1771,6 +1773,7 @@ button{background:#182332;border:1px solid var(--line);color:var(--text);border-
 .softwarechecks-grid table tr:first-child th{padding-top:0}
 .table-scroll{overflow:visible}.table-scroll.active{max-height:270px;overflow:auto;border:1px solid var(--line);border-radius:8px}.table-scroll.active table{margin:0}.table-scroll.active thead th{position:sticky;top:0;background:var(--card);z-index:1}
 .log-card .title-row{margin-bottom:8px}.log-card.log-expanded{position:fixed;inset:16px;z-index:1000;display:flex;flex-direction:column;background:#0d1117;box-shadow:0 0 0 9999px rgba(0,0,0,.72)}.log-card.log-expanded pre{flex:1;max-height:none}.log-card.log-expanded .toolbar{flex:0 0 auto}
+.report-footer{margin-top:18px;padding-top:14px;border-top:1px solid #21262d;color:var(--muted);font-size:12px}.report-footer .footer-line{margin-top:4px}.report-footer strong{color:var(--muted);font-family:Consolas,monospace;font-size:11px;text-transform:uppercase;margin-right:6px}
 @media(max-width:1000px){.wrap{margin:0;border-radius:0}.grid,.summary-grid{grid-template-columns:1fr}.card.wide{grid-column:span 1}.header{display:block}.kv{grid-template-columns:1fr}.softwarechecks-grid{grid-template-columns:1fr}.network-shell{grid-template-columns:1fr}}
 </style>
 <script>
@@ -2004,6 +2007,10 @@ $clipboardBanner
 
 $exquiseLogCards
 
+</div>
+<div class="report-footer">
+  <div class="footer-line"><strong>Versie</strong> $(HtmlEncode $versionText)</div>
+  <div class="footer-line">$(HtmlEncode $generated) -</div>
 </div>
 </div>
 </body>
