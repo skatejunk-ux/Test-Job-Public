@@ -317,7 +317,8 @@ function Format-LicenseNumber {
 function Get-TicketUrl {
     param([string]$Ticket)
     if (-not $Ticket) { return "" }
-    return "https://vertimart.topdesk.net/tas/secure/incident?action=lookup&lookup=naam&lookupValue=$Ticket"
+    $lookupTicket = if ($Ticket -match "^VM") { $Ticket } else { "VM$Ticket" }
+    return "https://vertimart.topdesk.net/tas/secure/incident?action=lookup&lookup=naam&lookupValue=$lookupTicket"
 }
 
 function Get-LicenseUrl {
@@ -2208,12 +2209,19 @@ function Start-TestJobProgressWindow {
     $log.BorderStyle = "FixedSingle"
     [void]$form.Controls.Add($log)
 
+    $hintLogo = [System.Windows.Forms.PictureBox]::new()
+    $hintLogo.Image = Get-TestJobLogoImage
+    $hintLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $hintLogo.Size = [System.Drawing.Size]::new(54, 54)
+    $hintLogo.Location = [System.Drawing.Point]::new(38, 560)
+    [void]$form.Controls.Add($hintLogo)
+
     $hint = [System.Windows.Forms.Label]::new()
-    $hint.Text = "Het rapport staat na openen op het klembord, plak dit in TOPdesk met CTRL+V"
+    $hint.Text = "Het rapport staat na openen op het klembord.`r`nPlak dit in TOPdesk met CTRL+V"
     $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8)
     $hint.AutoSize = $false
-    $hint.Size = [System.Drawing.Size]::new(360, 38)
-    $hint.Location = [System.Drawing.Point]::new(40, 568)
+    $hint.Size = [System.Drawing.Size]::new(320, 42)
+    $hint.Location = [System.Drawing.Point]::new(104, 572)
     $hint.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
     [void]$form.Controls.Add($hint)
 
