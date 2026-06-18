@@ -2,11 +2,14 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 title Test-Job Direct
+set "TESTJOB_BAT_VERSION=2026.06.18.1"
 set "TESTJOB_OUTPUT_DIR=%~dp0"
 set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
 set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
 set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt"
 set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
+set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
+set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
 set "TESTJOB_EMBEDDED_PS1=%TESTJOB_CACHE_DIR%\Test-Job-embedded.ps1"
 
 for /f "tokens=1 delims=:" %%i in ('findstr /n /c:"::PowerShell_Start" "%~f0"') do set "startLine=%%i"
@@ -33,6 +36,10 @@ if exist "%TESTJOB_REMOTE_URL_FILE%" (
 )
 
 set "PS_EXIT_CODE=1"
+
+if exist "%TESTJOB_CACHE_DIR%" (
+    del /f /q "%TESTJOB_REMOTE_PS1%" "%TESTJOB_REMOTE_TXT%" "%TESTJOB_REMOTE_META%" > nul 2>&1
+)
 
 if defined TESTJOB_REMOTE_URL call :RunOnline
 if not "%PS_EXIT_CODE%"=="0" call :RunEmbedded
@@ -94,6 +101,8 @@ if (-not $env:TESTJOB_HIDDEN -and -not $env:TESTJOB_RUN_SOURCE -and $MyInvocatio
 }
 
 $Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocation.MyCommand.Path) { $MyInvocation.MyCommand.Path } else { "" }
+$Script:TestJobPsVersion = "2026.06.18.1"
+$Script:TestJobBatVersion = if ($env:TESTJOB_BAT_VERSION) { $env:TESTJOB_BAT_VERSION } else { "directe-ps1" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
 $Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job.bat"
 $Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-bat-version.txt"
@@ -104,7 +113,7 @@ $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $en
 } else {
     (Get-Location).Path
 }
-$Script:LaunchSource = if ($env:TESTJOB_RUN_SOURCE) { $env:TESTJOB_RUN_SOURCE } else { "embedded" }
+$Script:LaunchSource = if ($env:TESTJOB_RUN_SOURCE) { $env:TESTJOB_RUN_SOURCE } elseif ($env:TESTJOB_BAT_VERSION) { "embedded" } else { "direct-ps1" }
 $Script:DomainsExtensive = @(
     "exquise.nl",
     "authorization.app.exquise.nl/health",
@@ -410,6 +419,17 @@ function Get-LicenseUrl {
     param([string]$LicenseNumber)
     if (-not $LicenseNumber) { return "" }
     return "https://devops.vertimart.nl/Licenties/Productie/View/$LicenseNumber"
+}
+
+function Get-TestJobVersionDisplay {
+    $batText = if ($Script:TestJobBatVersion -eq "directe-ps1") { "directe PS1-run" } else { "BAT $($Script:TestJobBatVersion)" }
+    $sourceText = switch ($Script:LaunchSource) {
+        "github" { "online" }
+        "embedded" { "lokaal" }
+        "direct-ps1" { "direct" }
+        default { $Script:LaunchSource }
+    }
+    return "PS1 $($Script:TestJobPsVersion) | $batText | bron $sourceText"
 }
 
 function Get-ReportFileName {
@@ -1692,6 +1712,8 @@ function Write-TestJobHtmlReport {
     if ($Data.Praktijk) { $metaParts += "<span><strong>Praktijk</strong> $(HtmlEncode $Data.Praktijk)</span>" }
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($licenseHtml) { $metaParts += "<span><strong>Licentie</strong> $licenseHtml</span>" }
+    $versionText = if ($Data.VersionDisplay) { $Data.VersionDisplay } else { Get-TestJobVersionDisplay }
+    if ($versionText) { $metaParts += "<span><strong>Versie</strong> $(HtmlEncode $versionText)</span>" }
     $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
@@ -2100,6 +2122,7 @@ Get-WanInfo
         CollectionErrors = $Script:CollectionErrors
         ClipboardOk = $false
         ReportFileName = ""
+        VersionDisplay = Get-TestJobVersionDisplay
     }
     Set-TestJobProgress 82 "Diagnosegegevens verzameld"
     return $data
@@ -2139,12 +2162,21 @@ function Start-TestJobProgressWindow {
     $subtitle.Text = "Vul de gegevens rustig in; het rapport opent pas via de knop."
     $subtitle.Font = [System.Drawing.Font]::new("Segoe UI", 9)
     $subtitle.AutoSize = $false
-    $subtitle.Size = [System.Drawing.Size]::new(430, 36)
+    $subtitle.Size = [System.Drawing.Size]::new(440, 20)
     $subtitle.Location = [System.Drawing.Point]::new(106, 53)
     $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(174, 188, 205)
     [void]$form.Controls.Add($subtitle)
 
-    $intakeTop = 96
+    $versionLabel = [System.Windows.Forms.Label]::new()
+    $versionLabel.Text = Get-TestJobVersionDisplay
+    $versionLabel.Font = [System.Drawing.Font]::new("Consolas", 8)
+    $versionLabel.AutoSize = $false
+    $versionLabel.Size = [System.Drawing.Size]::new(470, 18)
+    $versionLabel.Location = [System.Drawing.Point]::new(106, 72)
+    $versionLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$form.Controls.Add($versionLabel)
+
+    $intakeTop = 102
 
     $intakePanel = [System.Windows.Forms.Panel]::new()
     $intakePanel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
