@@ -1598,7 +1598,6 @@ function Write-TestJobHtmlReport {
 
     $eventLogEscaped = HtmlEncode (EventLogText $Data.EventLogs)
     $exquiseLogCards = ExquiseLogCardsHtml $Data.ExquiseLogs
-    $generated = (Get-Date).ToString("dd MMM yyyy HH:mm")
     $ticketFormatted = Format-TicketNumber $Data.Ticketnummer
     $ticketHtml = if ($ticketFormatted) {
         "<a href='$(AttrEncode (Get-TicketUrl $ticketFormatted))' class='ticket-link' target='_blank' rel='noopener noreferrer'>$(HtmlEncode $ticketFormatted)</a>"
@@ -1621,7 +1620,7 @@ function Write-TestJobHtmlReport {
     if ($Data.Naam) { $metaParts += "<span><strong>Naam</strong> $(HtmlEncode $Data.Naam)</span>" }
     if ($licenseHtml) { $metaParts += "<span><strong>Licentie</strong> $licenseHtml</span>" }
     $versionText = if ($Data.VersionDisplay) { $Data.VersionDisplay } else { Get-TestJobVersionDisplay }
-    $metaHtml = if ($metaParts.Count) { $metaParts -join " " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
+    $metaHtml = if ($metaParts.Count) { $metaParts -join " <span class='meta-sep'>|</span> " } else { "<span class='muted'>Geen rapportgegevens ingevuld</span>" }
     $reportFileName = if ($Data.ReportFileName) { [System.IO.Path]::GetFileName([string]$Data.ReportFileName) } else { [System.IO.Path]::GetFileName($Path) }
     $domainItems = @($Data.Network.Extensive + $Data.Network.Basic)
     $domainTotal = $domainItems.Count
@@ -1758,10 +1757,10 @@ $clipboardBanner
 <div class="header">
   <div style="width:100%;">
     <div class="header-main">
-      <h1>Test-Job Rapport</h1>
+      <h1>Test-Job Rapport staat op het klembord voor plakken in TOPdesk</h1>
       <a class="action-link" href="https://www.speedtest.net/" target="_blank" rel="noopener noreferrer">Open Speedtest.net</a>
     </div>
-    <div class="report-meta">$metaHtml <span>$generated - Rapport staat op het klembord voor plakken in TOPdesk</span></div>
+    <div class="report-meta">$metaHtml</div>
   </div>
 </div>
 
