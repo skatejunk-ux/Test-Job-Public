@@ -332,6 +332,7 @@ function Get-LicenseUrl {
 function Get-TestJobVersionDisplay {
     $batText = if ($Script:TestJobBatVersion -eq "directe-ps1") { "directe PS1-run" } else { "BAT $($Script:TestJobBatVersion)" }
     $sourceText = switch ($Script:LaunchSource) {
+        "filemail" { "filemail" }
         "github" { "online" }
         "embedded" { "lokaal" }
         "direct-ps1" { "direct" }
@@ -1926,7 +1927,9 @@ $exquiseLogCards
 
 function Invoke-TestJobDiagnosis {
     $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
-    if ($Script:LaunchSource -eq "github") {
+    if ($Script:LaunchSource -eq "filemail") {
+        Set-TestJobProgress 2 "Online versie geladen van Filemail"
+    } elseif ($Script:LaunchSource -eq "github") {
         Set-TestJobProgress 2 "Online versie geladen van publieke bron"
     } else {
         Set-TestJobProgress 2 "Lokale fallbackversie gestart"

@@ -6,7 +6,7 @@ set "TESTJOB_BAT_VERSION=2026.06.18.1"
 set "TESTJOB_OUTPUT_DIR=%~dp0"
 set "TESTJOB_CACHE_DIR=%TEMP%\TestJob"
 set "TESTJOB_REMOTE_URL_FILE=%~dp0Test-Job-update-url.txt"
-set "TESTJOB_DEFAULT_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-online.txt"
+set "TESTJOB_DEFAULT_REMOTE_URL=https://mspsgroep.filemail.com/d/iqflrzgbrbisuqk"
 set "TESTJOB_REMOTE_PS1=%TESTJOB_CACHE_DIR%\Test-Job-latest.ps1"
 set "TESTJOB_REMOTE_TXT=%TESTJOB_CACHE_DIR%\Test-Job-latest.txt"
 set "TESTJOB_REMOTE_META=%TESTJOB_CACHE_DIR%\Test-Job-latest.meta.json"
@@ -35,8 +35,8 @@ if exist "%TESTJOB_REMOTE_URL_FILE%" (
     )
 )
 
-if /i "%TESTJOB_REMOTE_URL%"=="https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/main/Test-Job-online.txt" (
-    set "TESTJOB_REMOTE_URL=https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-online.txt"
+if /i not "%TESTJOB_REMOTE_URL%"=="https://mspsgroep.filemail.com/d/iqflrzgbrbisuqk" (
+    set "TESTJOB_REMOTE_URL=https://mspsgroep.filemail.com/d/iqflrzgbrbisuqk"
 )
 
 set "PS_EXIT_CODE=1"
@@ -67,14 +67,19 @@ powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -Command ^
  "if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force)};" ^
  "$out=$env:TESTJOB_REMOTE_PS1;" ^
  "Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue;" ^
- "$requestUrl=$env:TESTJOB_REMOTE_URL;" ^
- "if($requestUrl -match '\?'){ $requestUrl += '&' } else { $requestUrl += '?' };" ^
- "$requestUrl += ('cb=' + [DateTime]::UtcNow.Ticks);" ^
- "$response=Invoke-WebRequest -UseBasicParsing -Uri $requestUrl;" ^
- "$content=[string]$response.Content;" ^
+ "$requestUri=[Uri]$env:TESTJOB_REMOTE_URL;" ^
+ "$transferId=$requestUri.AbsolutePath.Trim('/');" ^
+ "$headers=@{ 'Accept'='application/json'; 'Origin'=$requestUri.GetLeftPart([System.UriPartial]::Authority); 'Referer'=$requestUri.AbsoluteUri; 'x-api-version'='2.0'; 'source'='web' };" ^
+ "$transfer=Invoke-RestMethod -Uri ('https://api.filemail.com/downloadpage/transfer?id=' + [Uri]::EscapeDataString($transferId)) -Headers $headers;" ^
+ "$token=$transfer.data.filestoken;" ^
+ "if([string]::IsNullOrWhiteSpace($token)){throw 'Ongeldige Filemail payload (filestoken ontbreekt)'};" ^
+ "$files=Invoke-RestMethod -Uri ('https://api.filemail.com/downloadpage/files?id=' + [Uri]::EscapeDataString($transferId) + '&filesToken=' + [Uri]::EscapeDataString($token)) -Headers $headers;" ^
+ "$file=@($files.data.files | Where-Object { $_.filename -eq 'Test-Job-online.txt' } | Select-Object -First 1);" ^
+ "if(-not $file){throw 'Test-Job-online.txt ontbreekt in Filemail transfer'};" ^
+ "$content=(Invoke-WebRequest -UseBasicParsing -Uri ($file.downloadurl + '&skipcheck=true&skipreg=true')).Content;" ^
  "if([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'TESTJOB_ONLINE_SENTINEL: TESTJOB_PS1_V1'){throw 'Ongeldige online payload'};" ^
  "Set-Content -LiteralPath $out -Value $content -Encoding ASCII;" ^
- "$env:TESTJOB_RUN_SOURCE='github';" ^
+ "$env:TESTJOB_RUN_SOURCE='filemail';" ^
  "& $out;" ^
  "exit 0" ^
  "}catch{" ^
@@ -431,6 +436,7 @@ function Get-LicenseUrl {
 function Get-TestJobVersionDisplay {
     $batText = if ($Script:TestJobBatVersion -eq "directe-ps1") { "directe PS1-run" } else { "BAT $($Script:TestJobBatVersion)" }
     $sourceText = switch ($Script:LaunchSource) {
+        "filemail" { "filemail" }
         "github" { "online" }
         "embedded" { "lokaal" }
         "direct-ps1" { "direct" }
@@ -2025,7 +2031,9 @@ $exquiseLogCards
 
 function Invoke-TestJobDiagnosis {
     $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
-    if ($Script:LaunchSource -eq "github") {
+    if ($Script:LaunchSource -eq "filemail") {
+        Set-TestJobProgress 2 "Online versie geladen van Filemail"
+    } elseif ($Script:LaunchSource -eq "github") {
         Set-TestJobProgress 2 "Online versie geladen van publieke bron"
     } else {
         Set-TestJobProgress 2 "Lokale fallbackversie gestart"
