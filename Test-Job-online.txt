@@ -1920,7 +1920,6 @@ $exquiseLogCards
 <div class="report-footer">
   <div class="footer-line"><strong>Versie</strong> $(HtmlEncode $versionText)</div>
   <div class="footer-line">$(HtmlEncode $generated) -</div>
-  <div class="footer-line">Build by OpenCode</div>
 </div>
 </div>
 </body>
