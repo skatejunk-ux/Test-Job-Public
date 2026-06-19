@@ -12,8 +12,6 @@ $Script:ScriptPath = if ($PSCommandPath) { $PSCommandPath } elseif ($MyInvocatio
 $Script:TestJobPsVersion = "2026.06.18.1"
 $Script:TestJobBatVersion = if ($env:TESTJOB_BAT_VERSION) { $env:TESTJOB_BAT_VERSION } else { "directe-ps1" }
 $Script:CollectionErrors = New-Object System.Collections.Generic.List[object]
-$Script:DefaultRemoteBatUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job.bat"
-$Script:DefaultRemoteBatVersionUrl = "https://raw.githubusercontent.com/skatejunk-ux/Test-Job-Public/master/Test-Job-bat-version.txt"
 $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR)) {
     (Resolve-Path -LiteralPath $env:TESTJOB_OUTPUT_DIR).Path
 } elseif ($MyInvocation.MyCommand.Definition) {
@@ -21,7 +19,13 @@ $Script:OutputDir = if ($env:TESTJOB_OUTPUT_DIR -and (Test-Path -LiteralPath $en
 } else {
     (Get-Location).Path
 }
-$Script:LaunchSource = if ($env:TESTJOB_RUN_SOURCE) { $env:TESTJOB_RUN_SOURCE } elseif ($env:TESTJOB_BAT_VERSION) { "embedded" } else { "direct-ps1" }
+$Script:LaunchSource = if ($env:TESTJOB_RUN_SOURCE) {
+    $env:TESTJOB_RUN_SOURCE
+} elseif ($env:TESTJOB_BAT_VERSION) {
+    "bat"
+} else {
+    "direct-ps1"
+}
 $Script:DomainsExtensive = @(
     "exquise.nl",
     "authorization.app.exquise.nl/health",
@@ -333,8 +337,8 @@ function Get-TestJobVersionDisplay {
     $batText = if ($Script:TestJobBatVersion -eq "directe-ps1") { "directe PS1-run" } else { "BAT $($Script:TestJobBatVersion)" }
     $sourceText = switch ($Script:LaunchSource) {
         "filemail" { "filemail" }
-        "github" { "online" }
-        "embedded" { "lokaal" }
+        "github" { "github" }
+        "bat" { "bat" }
         "direct-ps1" { "direct" }
         default { $Script:LaunchSource }
     }
@@ -1930,9 +1934,9 @@ function Invoke-TestJobDiagnosis {
     if ($Script:LaunchSource -eq "filemail") {
         Set-TestJobProgress 2 "Online versie geladen van Filemail"
     } elseif ($Script:LaunchSource -eq "github") {
-        Set-TestJobProgress 2 "Online versie geladen van publieke bron"
+        Set-TestJobProgress 2 "Nieuwe Test-Job.bat beschikbaar"
     } else {
-        Set-TestJobProgress 2 "Lokale fallbackversie gestart"
+        Set-TestJobProgress 2 "Lokale versie gestart"
     }
     Set-TestJobProgress 5 "Test-Job diagnose starten"
 
@@ -2090,7 +2094,17 @@ function Start-TestJobProgressWindow {
     $versionLabel.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
     [void]$form.Controls.Add($versionLabel)
 
-    $intakeTop = 102
+    $updateNotice = [System.Windows.Forms.Label]::new()
+    $updateNotice.Font = [System.Drawing.Font]::new("Segoe UI", 8)
+    $updateNotice.AutoSize = $false
+    $updateNotice.Size = [System.Drawing.Size]::new(470, 34)
+    $updateNotice.Location = [System.Drawing.Point]::new(106, 90)
+    $updateNotice.ForeColor = [System.Drawing.Color]::FromArgb(245, 185, 66)
+    $updateNotice.Visible = $Script:LaunchSource -eq "github"
+    $updateNotice.Text = "Nieuwe Test-Job.bat beschikbaar.`r`nDownload de nieuwe versie via Filemail om je oude BAT te vervangen."
+    [void]$form.Controls.Add($updateNotice)
+
+    $intakeTop = 124
 
     $intakePanel = [System.Windows.Forms.Panel]::new()
     $intakePanel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
@@ -2156,7 +2170,7 @@ function Start-TestJobProgressWindow {
     $stepCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
     $stepCard.BorderStyle = "FixedSingle"
     $stepCard.Size = [System.Drawing.Size]::new(430, 54)
-    $stepCard.Location = [System.Drawing.Point]::new(40, 282)
+    $stepCard.Location = [System.Drawing.Point]::new(40, 304)
     [void]$form.Controls.Add($stepCard)
 
     $stepLabel = [System.Windows.Forms.Label]::new()
@@ -2181,7 +2195,7 @@ function Start-TestJobProgressWindow {
     $percentCard.BackColor = [System.Drawing.Color]::FromArgb(13, 17, 23)
     $percentCard.BorderStyle = "FixedSingle"
     $percentCard.Size = [System.Drawing.Size]::new(120, 54)
-    $percentCard.Location = [System.Drawing.Point]::new(480, 282)
+    $percentCard.Location = [System.Drawing.Point]::new(480, 304)
     [void]$form.Controls.Add($percentCard)
 
     $percentLabel = [System.Windows.Forms.Label]::new()
@@ -2210,7 +2224,7 @@ function Start-TestJobProgressWindow {
     $bar.Value = 0
     $bar.Style = "Continuous"
     $bar.Size = [System.Drawing.Size]::new(560, 18)
-    $bar.Location = [System.Drawing.Point]::new(40, 350)
+    $bar.Location = [System.Drawing.Point]::new(40, 372)
     [void]$form.Controls.Add($bar)
 
     $phaseNames = @("Start", "Software", "Firewall", "Netwerk", "Logs", "Rapport")
@@ -2222,7 +2236,7 @@ function Start-TestJobProgressWindow {
         $phase.AutoSize = $false
         $phase.TextAlign = "MiddleCenter"
         $phase.Size = [System.Drawing.Size]::new(88, 18)
-        $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 376)
+        $phase.Location = [System.Drawing.Point]::new((40 + ($i * 94)), 398)
         $phase.ForeColor = [System.Drawing.Color]::FromArgb(104, 116, 130)
         [void]$form.Controls.Add($phase)
         $phaseLabels += $phase
@@ -2234,7 +2248,7 @@ function Start-TestJobProgressWindow {
     $log.ScrollBars = "Vertical"
     $log.Font = [System.Drawing.Font]::new("Consolas", 9)
     $log.Size = [System.Drawing.Size]::new(560, 138)
-    $log.Location = [System.Drawing.Point]::new(40, 416)
+    $log.Location = [System.Drawing.Point]::new(40, 438)
     $log.BackColor = [System.Drawing.Color]::FromArgb(11, 17, 23)
     $log.ForeColor = [System.Drawing.Color]::FromArgb(215, 221, 229)
     $log.BorderStyle = "FixedSingle"
@@ -2244,7 +2258,7 @@ function Start-TestJobProgressWindow {
     $hintLogo.Image = Get-TestJobLogoImage
     $hintLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
     $hintLogo.Size = [System.Drawing.Size]::new(54, 54)
-    $hintLogo.Location = [System.Drawing.Point]::new(38, 560)
+    $hintLogo.Location = [System.Drawing.Point]::new(38, 582)
     [void]$form.Controls.Add($hintLogo)
 
     $hint = [System.Windows.Forms.Label]::new()
@@ -2252,7 +2266,7 @@ function Start-TestJobProgressWindow {
     $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8)
     $hint.AutoSize = $false
     $hint.Size = [System.Drawing.Size]::new(320, 42)
-    $hint.Location = [System.Drawing.Point]::new(104, 572)
+    $hint.Location = [System.Drawing.Point]::new(104, 594)
     $hint.ForeColor = [System.Drawing.Color]::FromArgb(150, 161, 173)
     [void]$form.Controls.Add($hint)
 
@@ -2407,6 +2421,77 @@ function Start-TestJobProgressWindow {
     })
 
     [System.Windows.Forms.Application]::Run($form)
+}
+
+function Show-TestJobLegacyGithubNotice {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $downloadUrl = "https://mspsgroep.filemail.com/d/qzhhprvjrtrggzo"
+
+    $form = [System.Windows.Forms.Form]::new()
+    $form.Text = "Nieuwe Test-Job.bat vereist"
+    $form.StartPosition = "CenterScreen"
+    $form.Size = [System.Drawing.Size]::new(540, 305)
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.TopMost = $true
+    $form.BackColor = [System.Drawing.Color]::FromArgb(18, 24, 32)
+    $form.ForeColor = [System.Drawing.Color]::FromArgb(232, 237, 243)
+
+    $panel = [System.Windows.Forms.Panel]::new()
+    $panel.Location = [System.Drawing.Point]::new(22, 18)
+    $panel.Size = [System.Drawing.Size]::new(480, 188)
+    $panel.BackColor = [System.Drawing.Color]::FromArgb(22, 31, 42)
+    $panel.BorderStyle = "FixedSingle"
+    [void]$form.Controls.Add($panel)
+
+    $title = [System.Windows.Forms.Label]::new()
+    $title.Text = "Deze oude Test-Job.bat wordt niet meer ondersteund."
+    $title.Font = [System.Drawing.Font]::new("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+    $title.Location = [System.Drawing.Point]::new(18, 18)
+    $title.Size = [System.Drawing.Size]::new(430, 24)
+    $title.ForeColor = [System.Drawing.Color]::FromArgb(245, 185, 66)
+    [void]$panel.Controls.Add($title)
+
+    $body = [System.Windows.Forms.Label]::new()
+    $body.Text = "Download de nieuwe Test-Job.bat via Filemail:" + [Environment]::NewLine + $downloadUrl + [Environment]::NewLine + [Environment]::NewLine + "De downloadsite opent nadat u op OK klikt."
+    $body.Font = [System.Drawing.Font]::new("Segoe UI", 9)
+    $body.Location = [System.Drawing.Point]::new(18, 58)
+    $body.Size = [System.Drawing.Size]::new(430, 92)
+    $body.ForeColor = [System.Drawing.Color]::FromArgb(220, 226, 234)
+    [void]$panel.Controls.Add($body)
+
+    $hint = [System.Windows.Forms.Label]::new()
+    $hint.Text = "De diagnose wordt niet gestart met deze oude versie."
+    $hint.Font = [System.Drawing.Font]::new("Segoe UI", 8.5)
+    $hint.Location = [System.Drawing.Point]::new(18, 154)
+    $hint.Size = [System.Drawing.Size]::new(430, 20)
+    $hint.ForeColor = [System.Drawing.Color]::FromArgb(139, 148, 158)
+    [void]$panel.Controls.Add($hint)
+
+    $okButton = [System.Windows.Forms.Button]::new()
+    $okButton.Text = "OK"
+    $okButton.Size = [System.Drawing.Size]::new(116, 34)
+    $okButton.Location = [System.Drawing.Point]::new(386, 222)
+    $okButton.FlatStyle = "Flat"
+    $okButton.BackColor = [System.Drawing.Color]::FromArgb(32, 108, 196)
+    $okButton.ForeColor = [System.Drawing.Color]::White
+    $okButton.Add_Click({
+        try {
+            Start-Process $downloadUrl
+        } catch { }
+        $form.Close()
+    })
+    [void]$form.Controls.Add($okButton)
+
+    $form.AcceptButton = $okButton
+    [void]$form.ShowDialog()
+}
+
+if ($Script:LaunchSource -eq "github") {
+    Show-TestJobLegacyGithubNotice
+    return
 }
 
 if ($env:TESTJOB_WORKER -eq "1") {
