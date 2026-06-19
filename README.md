@@ -1,3 +1,4 @@
 # Test-Job Public
 
-Publieke bronbestanden voor de online launcher van Test-Job.
+Publieke launcherartefacten voor de PS1-only versie van Test-Job.
+
